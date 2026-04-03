@@ -1,0 +1,166 @@
+Project Handover: Custom Physical Modelling Synthesiser
+Context document for Claude Opus — continuation from initial design session
+Who You're Talking To
+Name: Nancy (goes by Wofl informally)
+
+Location: Glyn-neath, Wales, UK
+
+Background: ~2.5 years self-taught Rust developer; started coding to understand a digital synth module, spent the time learning Rust, graphics programming, debugging, systems programming
+
+Communication style: casual, informal, Welsh cadence, uses "fren", abbreviations, stream-of-consciousness — match this energy
+
+Your role: strategic advisor + senior Rust/DSP collaborator. Challenge assumptions, show trade-offs, give concise plans with next steps. Full code, no placeholders.
+
+The Project
+Working title: PulsePhysics3D (acknowledged as old/placeholder — a better name has not yet been chosen)
+
+Philosophy:
+
+"Should feel natural — not limited or restrictive, but all possible things you select are sweet spots"
+
+"Intuitive, not over complex"
+
+Build from the mathematics up, in pure Rust — no pre-built frameworks as dependencies. Existing crates/papers used only as mathematical reference and validation, never as runtime dependencies
+
+No deadlines, no shortcuts — built correct and complete over fast
+
+Signal chain (left to right):
+
+text
+Exciter → Vibrator → Resonant Body → Non-Lins → Spatial
+What each section is:
+
+Exciter: how the instrument is played — pluck, bow, breath, drum hit, strum, etc. (see full detail below)
+
+Vibrator: what vibrates — string, hollow tube, membrane/skin, etc. (waveguide delay-line models)
+
+Resonant Body: the acoustic body that colours the sound — wooden box, tube extension, open drum shell, etc. (modal synthesis — IIR filter banks per mode, derived from 3D shape)
+
+Non-Lins: character and colour layer — amp sims, tape/magnetic coil, tube saturation, speaker cab, mic models
+
+Spatial: room reverb, delay
+
+Morphing: A core design pillar. The instrument is not static — all parameters including the instrument's own physical model can morph continuously through time as a compositional element. Not just automation — the instrument evolves.
+
+Hardware vision (end goal): Standalone embedded hardware instrument with 5-6 small screens, one per section, each with an endless rotary encoder (menu scroll) + push action (select), plus parameter encoders. Embedded Rust — no VST framework needed for the final form.
+
+Plugin/VST: Not the primary goal. May be prototyped first for rapid feedback iteration, but the hardware standalone is the real instrument.
+
+Decisions Already Made
+Architecture
+Pure Rust from the maths up. No JUCE, no nih-plug, no pre-built physical modelling crates as runtime dependencies.
+
+Existing work (Julius O. Smith's waveguide work, Stefan Bilbao's FDTD/modal synthesis book, NESS project papers, modal resonator research) used for mathematical understanding only.
+
+All DSP, physics models, parameter systems, and UI logic written from scratch.
+
+Input Protocol Stack (Exciter section input)
+Normalised internally to a single PlayGesture struct:
+
+rust
+PlayGesture {
+    position:    f32,  // 0.0–1.0 — where on vibrator exciter contacts (MPE X / CC74)
+    force:       f32,  // 0.0–1.0 — how hard (MPE Z pressure / velocity / poly aftertouch)
+    speed:       f32,  // 0.0–1.0 — rate of movement (pitch bend rate / MPE X delta / breath CC)
+    continuity:  bool, // note held = true (distinguishes bow/breath from pluck/hit)
+}
+Input protocols supported (all normalise to PlayGesture):
+
+MIDI 1.0 (velocity, poly aftertouch, pitch bend, CCs)
+
+MPE — MIDI Polyphonic Expression (per-note X/Y/Z; Roli Seaboard, LinnStrument, Osmose, Continuum, etc.)
+
+MIDI 2.0 (32-bit resolution per dimension; backwards compatible with MIDI 1.0; arriving on Windows Feb 2026)
+
+OSC (Open Sound Control — software/networked/custom controllers)
+
+CV/Gate (hardware path — analogue modular integration)
+
+Exciter Model Architecture
+Key insight: Do NOT use a named enum (Bow, Pluck, Breath). Model the underlying physics directly.
+
+Two axes, both continuous spectra:
+
+energy_continuity: f32 — 0.0 = pure impulse → 1.0 = pure continuous
+
+coupling_mode: { direct: f32, friction: f32, pressure: f32 } — normalised, sum to 1.0
+
+Plus:
+
+stochasticity: f32 — 0.0 = deterministic → 1.0 = fully granular/random
+
+multiplicity: u8 — 1 = single point, N = strum/chord spread
+
+rust
+struct ExciterModel {
+    energy_continuity: f32,
+    coupling_direct:   f32,
+    coupling_friction: f32,
+    coupling_pressure: f32,
+    stochasticity:     f32,
+    multiplicity:      u8,
+}
+Named presets map to this (not an enum, just convenient starting points):
+
+Pluck: {continuity: 0.0, direct: 1.0, friction: 0.0, pressure: 0.0, stochastic: 0.05, mult: 1}
+
+Bow: {continuity: 1.0, direct: 0.0, friction: 1.0, pressure: 0.0, stochastic: 0.01, mult: 1}
+
+Breath: {continuity: 1.0, direct: 0.0, friction: 0.0, pressure: 1.0, stochastic: 0.02, mult: 1}
+
+Strum: {continuity: 0.0, direct: 1.0, friction: 0.0, pressure: 0.0, stochastic: 0.1, mult: N}
+
+E-bow (continuous direct): {continuity: 1.0, direct: 1.0, friction: 0.0, pressure: 0.0, stochastic: 0.0, mult: 1}
+
+Singing bowl (hybrid): {continuity: 1.0, direct: 0.0, friction: 0.6, pressure: 0.4, stochastic: 0.0, mult: 1}
+
+Granular/rain: {continuity: 0.3, direct: 1.0, friction: 0.0, pressure: 0.0, stochastic: 0.95, mult: 32}
+
+The morphing system interpolates between any two ExciterModel states continuously. PlayGesture values modulate on top in real time. Two independent expression layers simultaneously.
+
+Mathematical Primitives Per Coupling Mode
+Direct injection: Shaped noise burst → waveguide initial conditions (Karplus-Strong extended)
+
+Friction (stick-slip): Nonlinear friction function of relative velocity — string velocity vs bow velocity. When bow speed relative to string speed → 0, stick; when force exceeds static friction threshold, slip. Produces sawtooth-like energy injection.
+
+Pressure (flow): Nonlinear reed-opening function × mouth pressure → flow equation. Self-oscillates above threshold. Charlotte Desvages (Edinburgh) bowed string thesis; Aalto/Bilbao for pressure models.
+
+Mathematical Reference Sources (do not use as runtime deps)
+Julius O. Smith III — Physical Audio Signal Processing (online book, Stanford CCRMA)
+
+Stefan Bilbao — Numerical Sound Synthesis (Wiley) — FDTD, modal synthesis
+
+NESS Project papers (Edinburgh) — physical modelling algorithms
+
+Charlotte Desvages PhD thesis (Edinburgh 2018) — bowed string physical modelling
+
+Rigid-Body Sound Synthesis with Differentiable Modal Resonators (QMUL, 2022/2023) — modal synthesis, differentiable IIR filter banks from shape+material
+
+What Has NOT Been Started Yet
+No code written yet. This was a pure design session.
+
+The agreed first implementation task is: PlayGesture normaliser struct + one input protocol conversion (MIDI 1.0 first)
+
+From there: implement the four coupling mode signal generators, test against known physical behaviour, then move to the Vibrator (waveguide) section
+
+
+---
+
+Suggested Opening Prompt for Claude Opus
+text
+I'm building a custom physical modelling synthesiser from scratch in Rust — 
+maths-first, no pre-built framework dependencies. I've attached a design 
+handover document from my previous session that covers the full vision, 
+signal chain, exciter architecture, input protocol decisions, and mathematical 
+references. Please read it carefully before we continue.
+
+We left off having fully designed the Exciter section conceptually. 
+The agreed first task is implementing the PlayGesture struct and MIDI 1.0 
+input normaliser in Rust. Before you write any code, confirm your 
+understanding of the ExciterModel architecture — specifically why it uses 
+continuous f32 axes rather than a named enum — and flag anything in the 
+design document that you'd challenge or refine. Then we'll begin.
+
+
+---
+

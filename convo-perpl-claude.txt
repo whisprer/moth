@@ -1,0 +1,170 @@
+
+i start by deciding which section i'm working on, looking at the math for it and deciding of the various approaches, which is most suitable and hence that dictates what code to begin with
+
+Correct. That's the right order.
+
+Vision → Section → Mathematics → Approach decision → Code. Not the other way around. Most people start with code and let the code constrain the vision. You're letting the vision constrain the code, which means the code will actually serve the instrument rather than the instrument serving whatever was easy to implement.
+
+The section you pick first also matters more than it seems — it becomes the proof of concept that tells you the whole thing is real. It sets the tone, the coding patterns, the internal API shape that everything else will eventually connect to.
+
+So the actual first decision is: which section do you start with?
+
+The logical candidates and their argument:
+
+Vibrator — the string/tube/membrane is the heart of the whole signal chain, everything else feeds into or out of it, and waveguide delay lines are mathematically self-contained enough to be a clean first win
+
+Exciter — it's the input, the thing you play, and getting something that responds to gesture early makes the project feel alive fastest
+
+Resonant body — the modal synthesis section is the most mathematically novel part of your vision, hardest section, highest risk, best argument for tackling it first while motivation is peak
+
+Non-lins — smallest scope, fastest working audio, good for establishing Rust audio pipeline patterns before the harder sections
+
+The experienced builder in you probably already knows which one is pulling at you. Which is it?
+
+Prepared using Claude Sonnet 4.6 Thinking
+this is what exposes the one bit i have no clue on - the exciter section - i have to decide how many different input means it's gonna be compatible with to make it as expressively playable as possible and also future proof, and here's where my knowledge lacks - i'm aware there's supposedly a midi2.0 coming - but i see no sign of classic midi going out anytime soon, then there's things within midi like poly-aftertouch n stuff which are highly desirable for a playable instrument; but what if it's to be controlled by computer or... i dunno... roli-seaboard... or some weird hexagonal keyboard that guarantees always getting a chors or w/e...
+
+This is actually one of the most exciting design decisions in the whole project, and you've hit on the exact right tension — breadth of input compatibility vs. coherence of design.
+
+The Protocol Landscape Right Now
+Here's the actual state of play as of early 2026:
+
+Protocol	Status	Resolution	Best for
+MIDI 1.0	Immortal, going nowhere	128 steps (7-bit)	Universal compatibility, every device ever made
+MPE (MIDI Polyphonic Expression)	Mature, well-adopted	Per-note: pitch, pressure, slide (3D per note)	Roli Seaboard, LinnStrument, Osmose, Continuum 
+MIDI 2.0	Arriving now — Windows 11 getting it Feb 2026 
+, spec accelerating 
+~4.2 billion steps (32-bit), 65,000-step velocity 
+Future-proof, backwards compatible, high-res per-note
+OSC (Open Sound Control)	Niche but powerful	Arbitrary float precision	Software, networked control, custom setups 
+The Key Insight for Your Design
+MIDI 2.0 is explicitly designed as a superset of MIDI 1.0 — not a replacement. So a single well-designed input abstraction layer that speaks MIDI 2.0 natively will automatically handle MIDI 1.0 devices through backwards compatibility. You're not choosing between them — you're choosing a ceiling, and MIDI 2.0 is the right ceiling.
+
+MPE is the sweet spot for expressive controllers right now — it's what the Roli Seaboard, LinnStrument, Haken Continuum, and Osmose all speak. It gives you three independent per-note dimensions: slide (X axis), press (Y/Z pressure), and pitch bend — which maps beautifully onto your exciter section concept of how something is played, not just what note.
+
+The Exciter Input Architecture
+For maximum expressiveness and future-proofing, your input abstraction layer should receive:
+
+Physical gesture data — MPE/MIDI 2.0 per-note X/Y/Z dimensions (covers Roli, LinnStrument, Linnstrument, Osmose, Continuum, any isomorphic hex keyboard with MPE)
+
+Traditional MIDI 1.0 — velocity + mono aftertouch + pitch bend + CCs (covers everything ever made)
+
+Poly aftertouch — supported natively in MIDI 1.0 and MIDI 2.0, criminally underused, maps directly onto your per-note pressure model
+
+OSC — for software controllers, computer-based input, and anything custom
+
+CV/Gate — if the hardware path is real, analogue modular integration is one clean voltage-in header away
+
+The Design Philosophy Match
+Here's the beautiful thing — your "all selections are sweet spots" philosophy and the exciter section map almost perfectly onto MPE's three dimensions:
+
+X (slide/lateral) → exciter position on the vibrator (where you bow/pluck/blow)
+
+Y (press/normal pressure) → exciter force (bow pressure, breath intensity, strike velocity)
+
+Z (initial velocity + release) → attack and decay character of the excitation
+
+A MIDI 1.0 controller automatically collapses to a subset of that. A MIDI 2.0 controller expands it with 32-bit resolution per dimension. OSC from a computer could map anything to anything. The abstraction layer handles the normalisation — your physics engine just sees normalised values 0.0–1.0 per dimension, regardless of source.
+
+The exciter section is therefore the right place to start, because designing that input abstraction layer in Rust first gives you the data contract that every other section eventually responds to.
+
+Prepared using Claude Sonnet 4.6 Thinking
+my final hurdle then for the exciter section - how do i design it such that it can take those input options and yet somehow results in a signal that might be an expressive strum, pluck, bow-stroke, drum-hit or breath pulse?
+
+This is the core design problem of the whole instrument, and the answer is surprisingly elegant once you see it.
+
+The Unifying Insight
+Every exciter type — no matter how different it feels to play — is just a different pattern of energy injection into the vibrator. They all reduce to two fundamental properties:
+
+Energy shape — is it impulsive (a burst) or continuous (a sustained flow)?
+
+Coupling mode — is it direct injection, friction, or pressure-driven?
+
+That's it. Every physical exciter in existence lives somewhere on those two axes.
+
+The Four Primitive Exciter Models
+Exciter	Energy shape	Coupling	Mathematical core
+Pluck / drum hit	Impulsive burst	Direct injection	Shaped noise → waveguide initial conditions 
+Bow stroke	Continuous	Friction (stick-slip)	Nonlinear friction function of relative velocity 
+Breath / reed / lip	Continuous	Pressure valve	Flow equation: pressure × nonlinear reed-opening function 
+Strum	Multiple impulsive	Direct, time-offset	N pluck events with position + timing spread
+These aren't arbitrary categories — they are the actual physics. Every instrument that has ever existed uses one of these four coupling modes. Your mix-and-match philosophy means you're exposing this directly to the player.
+
+The Architecture That Unifies Them
+The key is a two-stage design. Stage one normalises all input protocols into a single internal gesture format. Stage two maps that gesture onto whichever exciter model is selected:
+
+text
+MPE X/Y/Z  ─┐
+MIDI vel    ─┤──► PlayGesture { position: f32,   ──► ExciterModel::Bow { .. }
+Aftertouch  ─┤                  force: f32,            ExciterModel::Pluck { .. }
+OSC floats  ─┘                  speed: f32,            ExciterModel::Breath { .. }
+                                continuity: bool }      ExciterModel::Strum { .. }
+The PlayGesture struct holds four normalised 0.0–1.0 values, regardless of where they came from:
+
+position — where on the vibrator the exciter contacts it (MPE X, or CC74)
+
+force — how hard (MPE Z pressure, MIDI velocity, poly aftertouch)
+
+speed — rate of movement (derived from pitch bend rate, MPE X delta, breath CC)
+
+continuity — note-held boolean (distinguishes bow/breath from pluck/hit)
+
+The exciter model then interprets those four values differently depending on type:
+
+Pluck uses force to shape a noise burst amplitude/brightness, position to set injection point into the waveguide, and ignores continuity after the initial transient
+
+Bow feeds speed and force into a stick-slip friction function — when bow speed relative to string speed drops near zero, it sticks; when force exceeds static friction threshold, it slips — producing the characteristic sawtooth energy
+
+Breath uses force as mouth pressure driving a nonlinear flow equation through a virtual reed opening — continuous flow that self-oscillates when pressure hits a threshold
+
+Strum fires multiple pluck events with position spread across the vibrator and randomised micro-timing derived from speed
+
+Why This Is Correct for Your Philosophy
+The "all options are sweet spots" design principle is automatically satisfied here — because you're not inventing arbitrary parameter spaces, you're exposing the physical ranges that instruments actually operate within. A bow that moves too slowly doesn't produce an ugly sound — it just produces a softer, breathier tone, exactly as a real bow does. A breath pressure just below reed-oscillation threshold gives a breathy, airy sound — not silence, not distortion. The physics enforces musicality.
+
+The Rust ExciterSignal that emerges from this — a per-sample f32 stream — feeds directly into your vibrator section with no further translation. The vibrator doesn't need to know whether it was bowed or plucked. It just receives energy at a point.
+
+First thing to implement: the PlayGesture normaliser. One input-agnostic struct, one conversion function per protocol (MIDI 1.0, MPE, MIDI 2.0, OSC). That's the foundation everything else plugs into — and it's also the smallest, most testable first piece of real Rust.
+
+Prepared using Claude Sonnet 4.6 Thinking
+
+
+
+does this allow for the creation of new exciter types that are other combinations of impulse vs. continuous, and direct friction vs. pressure, fren?
+
+Yes. Completely, enthusiastically yes — and this is where your instrument stops being a very good physical modeller and starts being something genuinely new.
+
+The Two Axes Are Spectra, Not Categories
+The critical realisation is that impulsive↔continuous and direct↔friction↔pressure aren't discrete boxes — they're continuous parameters. Every point in that 2D space is a valid, playable exciter type. Most of that space has never been inhabited by a real instrument because physics and materials constrain what hands and mouths can physically do. You have no such constraint.
+
+The Unexplored Regions
+Impulsive + Friction — a "snap bow". A momentary stick-slip event rather than a sustained one. Sounds like a col legno strike (bow stick on string), a finger snap on a surface, or a very short aggressive bow attack with instant release. No real instrument does this cleanly.
+
+Impulsive + Pressure — a "tongue pulse". A brief pressure spike that opens a reed and immediately closes it — a single oscillation of a breath column rather than sustained flow. This is like the attack transient of a brass note isolated and made into its own event. Staccatissimo taken to its logical extreme.
+
+Continuous + Direct — this one does exist in the real world, barely: the EBow — an electromagnetic feedback loop that drives a string directly with no friction, no pressure, pure sustained energy injection. In synthesis, this maps to a feedback-coupled direct injection signal. It's the most "electronic" sounding exciter whilst remaining physically grounded.
+
+Granular / Stochastic — anywhere on the impulsive↔continuous axis but with probabilistic timing. Rain on a surface, bouncing objects, swarming insects. Madrona Labs' Kaivo does a version of this — granular synthesis feeding a physical resonator — but you'd be building it into the exciter model itself with physical parameters rather than as an audio sample source.
+
+Hybrid simultaneous — pressure and friction active at the same time. This is the glass harmonica / singing bowl model: a wetted finger creates both friction (stick-slip) and changes the pressure distribution on the rim simultaneously. Two coupled exciter mechanisms producing one emergent oscillation. Nothing in commercial synthesis models this properly.
+
+What This Means for Your Architecture
+The ExciterModel enum you'd naturally reach for in Rust — Bow, Pluck, Breath, Strum — is already wrong before you write it, because it encodes the named instrument gestures rather than the underlying physics. The correct design is:
+
+text
+ExciterModel {
+    energy_continuity: f32,   // 0.0 = pure impulse → 1.0 = pure continuous
+    coupling_mode: CouplingMode { direct: f32, friction: f32, pressure: f32 },  // summing to 1.0
+    stochasticity: f32,        // 0.0 = deterministic → 1.0 = fully granular/random
+    multiplicity: u8,          // 1 = single point, N = strum/chord spread
+}
+A pluck is {continuity: 0.0, coupling: direct 1.0, stochastic: 0.05, multiplicity: 1}. A bow is {continuity: 1.0, coupling: friction 1.0, stochastic: 0.01, multiplicity: 1}. A singing bowl is {continuity: 1.0, coupling: friction 0.6 pressure 0.4, stochastic: 0.0, multiplicity: 1}. Rain is {continuity: 0.3, coupling: direct 1.0, stochastic: 0.95, multiplicity: 32}.
+
+And — crucially — your morphing-through-time system interpolates between any two of those parameter sets continuously. You can transition from a pluck to a bow mid-note. You can make pressure gradually overtake friction. You can let stochasticity bleed in as the note sustains. None of that exists anywhere else.
+
+The PlayGesture values from the player's hands map onto these exciter parameters in real time, and the exciter parameters morph on their own timeline on top of that. Two independent layers of expressiveness, both physical, both musical.
+
+Prepared using Claude Sonnet 4.6 Thinking
+
+
+
