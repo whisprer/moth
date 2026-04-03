@@ -118,10 +118,10 @@ impl PressureState {
 /// # Example
 ///
 /// ```
-/// use pulse_physics::exciter_dsp::ExciterProcessor;
-/// use pulse_physics::exciter::ExciterModel;
-/// use pulse_physics::gesture::PlayGesture;
-/// use pulse_physics::instrument_dna::InstrumentDna;
+/// use moth::exciter_dsp::ExciterProcessor;
+/// use moth::exciter::ExciterModel;
+/// use moth::gesture::PlayGesture;
+/// use moth::instrument_dna::InstrumentDna;
 ///
 /// let dna = InstrumentDna::from_seed(0xDEAD_BEEF, 48000.0);
 /// let mut proc = ExciterProcessor::new(&dna.exciter, 48000.0);
@@ -222,9 +222,15 @@ impl ExciterProcessor {
         // ── Apply DNA to model parameters ──
         let effective_tilt = (model.spectral_tilt * self.dna.spectral_tilt_bias).clamp(0.0, 1.0);
 
-        // Update tilt filter coefficient
-        // tilt=0 (soft) → coeff=0.05 (dark). tilt=1 (hard) → coeff=0.95 (bright).
-        let tilt_coeff = 0.05 + effective_tilt * 0.90;
+        // Update tilt filter coefficient.
+        // tilt=0 (soft) → coeff near 0.05 (dark).
+        // tilt=1 (hard) → coeff capped by (1.0 - warmth_floor).
+        //
+        // The warmth floor ensures the tilt filter never goes fully
+        // transparent. At warmth_floor=0.25, even maximum brightness
+        // retains 25% lowpass effect. The instrument does not bite.
+        let max_brightness = 1.0 - self.dna.warmth_floor; // e.g. 0.75 for floor=0.25
+        let tilt_coeff = 0.05 + effective_tilt * (max_brightness - 0.05);
         self.tilt_filter.set_coeff(tilt_coeff);
 
         // ── Per-sample interpolation targets ──

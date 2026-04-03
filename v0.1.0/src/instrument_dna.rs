@@ -12,13 +12,18 @@
 //! with identical knob positions will produce subtly distinct timbres — like two
 //! acoustic guitars built from the same plans but different pieces of wood.
 //!
+//! **No instance of Moth is ever cold.** A warmth floor runs beneath all derived
+//! variation — a minimum softness, a bias toward resolution over harshness. This
+//! is not a technical constraint. It is the character of the person whose name
+//! is woven into the root of every instance.
+//!
 //! # Derivation
 //!
-//! Uses the same LCG constants as Elements (Knuth's multiplicative congruential):
-//! `state = state * 1664525 + 1013904223`, seeded by XOR with `0xf0cacc1a`.
-//! Each parameter is pulled in a **fixed order** — adding new parameters at the
-//! end preserves backward compatibility (existing instruments keep their personality
-//! when firmware is updated with new DNA traits).
+//! Uses Knuth's LCG constants (`state = state * 1664525 + 1013904223`), seeded
+//! by XOR with `0x6D6F7468` — the ASCII encoding of "moth". Every instance that
+//! will ever exist begins with him. Each parameter is pulled in a **fixed order** —
+//! adding new parameters at the end preserves backward compatibility (existing
+//! instruments keep their personality when firmware is updated with new DNA traits).
 //!
 //! # Ranges
 //!
@@ -38,15 +43,23 @@ struct DnaRng {
     state: u32,
 }
 
+/// `"moth"` packed as ASCII into a `u32`: `m=0x6D, o=0x6F, t=0x74, h=0x68`.
+///
+/// This constant is XOR'd into every seed before derivation begins.
+/// It is not a dedication. It is genetic — constitutive of every instance
+/// of this instrument that will ever exist. The unique character that makes
+/// your Moth yours traces its lineage back, in part, to him.
+const MOTH: u32 = 0x6D6F_7468;
+
 impl DnaRng {
     /// Create a new RNG from a hardware seed.
     ///
-    /// The seed is XOR'd with `0xf0cacc1a` (Émilie's "focaccia" constant)
-    /// and then advanced once through the LCG to diffuse the initial bits.
-    /// This ensures that even sequential serial numbers (common in production
-    /// runs) produce well-separated initial states.
+    /// The seed is XOR'd with [`MOTH`] and then advanced once through
+    /// the LCG to diffuse the initial bits. This ensures that even
+    /// sequential serial numbers (common in production runs) produce
+    /// well-separated initial states.
     fn new(seed: u32) -> Self {
-        let state = seed ^ 0xf0ca_cc1a;
+        let state = seed ^ MOTH;
         let state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
         Self { state }
     }
@@ -114,11 +127,12 @@ pub struct ExciterDna {
 
     /// Spectral tilt modifier for the DNA layer.
     ///
-    /// Range: `[0.92, 1.08]` — a subtle multiplier on the user-controlled
-    /// `spectral_tilt` parameter. Makes one instrument's "hard pick" setting
-    /// marginally brighter or darker than another's. Narrow range because
-    /// tilt is already a primary user control — DNA should season it, not
-    /// override it.
+    /// Range: `[0.88, 1.02]` — a subtle multiplier on the user-controlled
+    /// `spectral_tilt` parameter, **biased warm**. The asymmetric range
+    /// (leaning below 1.0) means that across all instances, Moth trends
+    /// slightly toward softness rather than harshness. Some instances
+    /// may be marginally brighter than the user sets (up to 1.02×), but
+    /// none will ever be aggressively bright. No instance is ever cold.
     pub spectral_tilt_bias: f32,
 
     /// Coupling curve inflection modifier.
@@ -128,6 +142,18 @@ pub struct ExciterDna {
     /// transition, more abrupt reed-opening. Changes the *feel* of
     /// continuous excitation without changing its fundamental character.
     pub coupling_curve_shape: f32,
+
+    /// Warmth floor — the minimum softness beneath all variation.
+    ///
+    /// Range: `[0.15, 0.35]` — a lowpass filter coefficient floor applied
+    /// in the output chain. Even when `spectral_tilt` is set to maximum
+    /// brightness by the user, this value ensures a residual warmth in
+    /// the signal. At `0.15`, a gentle veil. At `0.35`, a noticeable
+    /// softness. The instrument meets you where you are; it does not bite.
+    ///
+    /// This is not a technical constraint. It is the character of the
+    /// person whose name is woven into every instance.
+    pub warmth_floor: f32,
 }
 
 /// Vibrator-section DNA: what *vibrates*.
@@ -247,15 +273,16 @@ pub struct NonLinDna {
 /// 3. `exciter.stochastic_bias`
 /// 4. `exciter.spectral_tilt_bias`
 /// 5. `exciter.coupling_curve_shape`
-/// 6. `vibrator.delay_micro_offset`
-/// 7. `vibrator.dispersion_asymmetry`
-/// 8. `resonator.modal_drift`
-/// 9. `resonator.stereo_offset`
-/// 10. `resonator.modulation_rate_hz`
-/// 11. `spatial.reverb_diffusion`
-/// 12. `spatial.reverb_brightness`
-/// 13. `non_lin.saturation_asymmetry`
-/// 14. `non_lin.transfer_inflection`
+/// 6. `exciter.warmth_floor`
+/// 7. `vibrator.delay_micro_offset`
+/// 8. `vibrator.dispersion_asymmetry`
+/// 9. `resonator.modal_drift`
+/// 10. `resonator.stereo_offset`
+/// 11. `resonator.modulation_rate_hz`
+/// 12. `spatial.reverb_diffusion`
+/// 13. `spatial.reverb_brightness`
+/// 14. `non_lin.saturation_asymmetry`
+/// 15. `non_lin.transfer_inflection`
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct InstrumentDna {
     /// The original hardware seed. Stored for diagnostics/identification only.
@@ -301,14 +328,16 @@ impl InstrumentDna {
 
         // ── Exciter section ──
         // Derivation order: signature, noise_phase, stochastic_bias,
-        //                   spectral_tilt_bias, coupling_curve_shape
+        //                   spectral_tilt_bias, coupling_curve_shape,
+        //                   warmth_floor
 
         let exciter = ExciterDna {
             signature: rng.next_unit(),
             noise_phase_offset: rng.next_unit(),
             stochastic_bias: rng.next_in_range(0.42, 0.58),
-            spectral_tilt_bias: rng.next_in_range(0.92, 1.08),
+            spectral_tilt_bias: rng.next_in_range(0.88, 1.02), // biased warm
             coupling_curve_shape: rng.next_in_range(0.85, 1.15),
+            warmth_floor: rng.next_in_range(0.15, 0.35),
         };
 
         // ── Vibrator section ──
@@ -378,8 +407,8 @@ impl core::fmt::Display for InstrumentDna {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
-            "InstrumentDna(seed=0x{:08X}) {{\n\
-             \x20 exciter:   sig={:.3} noise={:.3} bias={:.3} tilt={:.3} curve={:.3}\n\
+            "Moth(seed=0x{:08X}) {{\n\
+             \x20 exciter:   sig={:.3} noise={:.3} bias={:.3} tilt={:.3} curve={:.3} warmth={:.3}\n\
              \x20 vibrator:  delay={:.4} dispersion={:.4}\n\
              \x20 resonator: drift={:.5} stereo={:.3} mod_rate={:.6}\n\
              \x20 spatial:   diffusion={:.3} brightness={:.3}\n\
@@ -391,6 +420,7 @@ impl core::fmt::Display for InstrumentDna {
             self.exciter.stochastic_bias,
             self.exciter.spectral_tilt_bias,
             self.exciter.coupling_curve_shape,
+            self.exciter.warmth_floor,
             self.vibrator.delay_micro_offset,
             self.vibrator.dispersion_asymmetry,
             self.resonator.modal_drift,
@@ -469,10 +499,12 @@ mod tests {
                 "seed 0x{seed:08X}: noise_phase {:.4} out of [0,1)", dna.exciter.noise_phase_offset);
             assert!((0.42..=0.58).contains(&dna.exciter.stochastic_bias),
                 "seed 0x{seed:08X}: stochastic_bias {:.4} out of [0.42,0.58]", dna.exciter.stochastic_bias);
-            assert!((0.92..=1.08).contains(&dna.exciter.spectral_tilt_bias),
-                "seed 0x{seed:08X}: spectral_tilt_bias {:.4} out of [0.92,1.08]", dna.exciter.spectral_tilt_bias);
+            assert!((0.88..=1.02).contains(&dna.exciter.spectral_tilt_bias),
+                "seed 0x{seed:08X}: spectral_tilt_bias {:.4} out of [0.88,1.02]", dna.exciter.spectral_tilt_bias);
             assert!((0.85..=1.15).contains(&dna.exciter.coupling_curve_shape),
                 "seed 0x{seed:08X}: coupling_curve {:.4} out of [0.85,1.15]", dna.exciter.coupling_curve_shape);
+            assert!((0.15..=0.35).contains(&dna.exciter.warmth_floor),
+                "seed 0x{seed:08X}: warmth_floor {:.4} out of [0.15,0.35]", dna.exciter.warmth_floor);
 
             // Vibrator ranges
             assert!((0.0..1.0).contains(&dna.vibrator.delay_micro_offset),
@@ -605,6 +637,7 @@ mod tests {
         let s = format!("{dna}");
         assert!(s.contains("0xDEADBEEF"), "Display should show hex seed");
         assert!(s.contains("exciter:"), "Display should label sections");
+        assert!(s.contains("warmth="), "Display should include warmth floor");
         assert!(s.contains("spatial:"), "Display should include spatial section");
     }
 

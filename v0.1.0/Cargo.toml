@@ -1,8 +1,8 @@
 [package]
-name = "pulse_physics"
+name = "moth"
 version = "0.1.0"
 edition = "2021"
-description = "Physical modelling synthesiser — maths-first, pure Rust"
+description = "A physical modelling synthesiser — maths-first, pure Rust. Each instance alive and unrepeatable."
 
 [dependencies]
 
