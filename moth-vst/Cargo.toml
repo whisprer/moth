@@ -1,0 +1,16 @@
+[package]
+name = "moth-vst"
+version = "0.1.0"
+edition = "2021"
+description = "Moth physical modelling synthesiser — VST3/CLAP plugin"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# The Moth DSP library — path points to your existing v0.1.0 folder
+moth = { path = "../v0.2.0" }
+
+# nih-plug: the standard Rust audio plugin framework
+# Supports VST3 and CLAP output
+nih_plug = { git = "https://github.com/robbert-van-der-helm/nih-plug.git" }

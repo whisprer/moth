@@ -1,0 +1,9 @@
+fren, an uh oh!
+```
+   pwsh    C:  github  moth  moth-vst    main  ?13 ~2 -5 
+❯  cargo xtask bundle moth-vst --release                                            16:20:07
+See https://github.com/matklad/cargo-xtask/
+   pwsh    C:  github  moth  moth-vst    main  ?13 ~2 -5 
+❯                                                                                   16:20:19
+```
+what i do worng? D:
