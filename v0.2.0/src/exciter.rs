@@ -292,7 +292,7 @@ impl ExciterModel {
             coupling_pressure: lerp_f(self.coupling_pressure, other.coupling_pressure),
             spectral_tilt: lerp_f(self.spectral_tilt, other.spectral_tilt),
             stochasticity: lerp_f(self.stochasticity, other.stochasticity),
-            multiplicity: (mult_f.round() as u8).max(1),
+            multiplicity: ((mult_f + 0.5) as u8).max(1),
         }
     }
 

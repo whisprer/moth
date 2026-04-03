@@ -211,7 +211,7 @@ impl ExciterProcessor {
         // ── Gate edge detection ──
         let gate = gesture.continuity;
         let trigger = gate && !self.prev_gate;
-        let release = !gate && self.prev_gate;
+        let _release = !gate && self.prev_gate;
         self.prev_gate = gate;
 
         // ── Handle triggers ──
@@ -285,7 +285,7 @@ impl ExciterProcessor {
     }
 
     /// Handle gate rising edge — reset/trigger per-mode state.
-    fn on_trigger(&mut self, model: &ExciterModel, gesture: &PlayGesture) {
+    fn on_trigger(&mut self, _model: &ExciterModel, gesture: &PlayGesture) {
         let force = gesture.force;
 
         // Direct: initialise impulse envelope
