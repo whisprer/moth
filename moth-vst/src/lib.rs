@@ -1,5 +1,6 @@
 use nih_plug::prelude::*;
 use nih_plug_vizia::ViziaState;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use moth::exciter::ExciterModel;
@@ -21,9 +22,6 @@ struct MothPlugin {
     current_note: Option<u8>,
     /// Current gesture state.
     gesture: PlayGesture,
-    /// DNA seed — in a real hardware unit this comes from the MCU UID.
-    /// For the plugin, use a fixed seed or let the user set one.
-    dna_seed: u32,
 }
 
 impl Default for MothPlugin {
@@ -33,7 +31,6 @@ impl Default for MothPlugin {
             voice: None,
             current_note: None,
             gesture: PlayGesture::SILENT,
-            dna_seed: 0x6D6F_7468, // "moth" — the default seed IS Moth himself
         }
     }
 }
@@ -45,6 +42,12 @@ struct MothParams {
     /// Persisted editor window state (size, position).
     #[persist = "editor-state"]
     editor_state: Arc<ViziaState>,
+
+    /// Persisted DNA seed — unique per plugin instance.
+    /// 0 = not yet born (will be seeded on first init).
+    /// Once seeded, the DAW persists this with the project forever.
+    #[persist = "dna-seed"]
+    dna_seed: Arc<AtomicU32>,
 
     // ── Exciter ──
 
@@ -128,6 +131,7 @@ impl Default for MothParams {
     fn default() -> Self {
         Self {
             editor_state: editor::default_state(),
+            dna_seed: Arc::new(AtomicU32::new(0)), // 0 = not yet born
 
             // ── Exciter ──
             exciter_morph: FloatParam::new(
@@ -342,7 +346,37 @@ impl Plugin for MothPlugin {
         _context: &mut impl InitContext<Self>,
     ) -> bool {
         let sample_rate = buffer_config.sample_rate;
-        let dna = InstrumentDna::from_seed(self.dna_seed, sample_rate);
+
+        // ── DNA seed: birth of a unique Moth ──
+        // First time this instance loads: generate a seed from entropy.
+        // The DAW persists it with the project — same seed every reload.
+        // On hardware, this would come from the MCU unique device ID.
+        let mut seed = self.params.dna_seed.load(Ordering::Relaxed);
+        if seed == 0 {
+            // Not yet born — generate from system entropy.
+            // Mix timestamp, process ID, and a pointer for uniqueness.
+            let time_bits = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos() as u32;
+            let ptr_bits = (&*self as *const _ as usize) as u32;
+            let pid_bits = std::process::id();
+
+            // Combine entropy sources with xorshift mixing
+            seed = time_bits;
+            seed ^= pid_bits.wrapping_mul(2654435761); // Knuth multiplicative hash
+            seed ^= ptr_bits.wrapping_mul(2246822519);
+            seed ^= seed >> 16;
+            seed = seed.wrapping_mul(0x45D9F3B);
+            seed ^= seed >> 16;
+
+            // Ensure nonzero (0 is our sentinel for "unborn")
+            if seed == 0 { seed = 0x6D6F_7468; }
+
+            self.params.dna_seed.store(seed, Ordering::Relaxed);
+        }
+
+        let dna = InstrumentDna::from_seed(seed, sample_rate);
         self.voice = Some(MothVoice::new(&dna, sample_rate));
         true
     }
