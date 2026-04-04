@@ -1,4 +1,5 @@
 use nih_plug::prelude::*;
+use nih_plug_vizia::ViziaState;
 use std::sync::Arc;
 
 use moth::exciter::ExciterModel;
@@ -8,6 +9,8 @@ use moth::nonlin::SaturationCharacter;
 use moth::resonator::BodyShape;
 use moth::spatial::SpatialCharacter;
 use moth::voice::MothVoice;
+
+mod editor;
 
 // ─── Plugin ─────────────────────────────────────────────────────────────────
 
@@ -39,6 +42,10 @@ impl Default for MothPlugin {
 
 #[derive(Params)]
 struct MothParams {
+    /// Persisted editor window state (size, position).
+    #[persist = "editor-state"]
+    editor_state: Arc<ViziaState>,
+
     // ── Exciter ──
 
     #[id = "exciter_morph"]
@@ -120,6 +127,8 @@ struct MothParams {
 impl Default for MothParams {
     fn default() -> Self {
         Self {
+            editor_state: editor::default_state(),
+
             // ── Exciter ──
             exciter_morph: FloatParam::new(
                 "Exciter",
@@ -320,6 +329,10 @@ impl Plugin for MothPlugin {
 
     fn params(&self) -> Arc<dyn Params> {
         self.params.clone()
+    }
+
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+        editor::create(self.params.clone(), self.params.editor_state.clone())
     }
 
     fn initialize(

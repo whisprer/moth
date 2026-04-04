@@ -2,11 +2,13 @@
 name = "moth-vst"
 version = "0.2.0"
 edition = "2021"
-description = "Moth physical modelling synthesiser — VST3/CLAP plugin"
+authors = ["RYO Modular"]
+description = "Moth — physical modelling synthesiser VST3/CLAP plugin"
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "lib"]
 
 [dependencies]
 moth = { path = "../v0.2.0" }
-nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git" }
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = ["standalone"] }
+nih_plug_vizia = { git = "https://github.com/robbert-vdh/nih-plug.git" }
