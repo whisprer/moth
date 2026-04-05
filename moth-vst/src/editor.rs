@@ -110,7 +110,18 @@ const STYLE: &str = r#"
 .dot-teal { background-color: #5dcaa5; }
 .legend-label { font-size: 9; color: #6b6560; width: auto; height: auto; }
 
-param-slider { background-color: #252320; border-radius: 3px; }
+param-slider { background-color: #252320; border-radius: 3px; color: #d4a855; }
+param-slider .fill { background-color: #d4a855; }
+param-slider.sl-purple { color: #9b7ad8; }
+param-slider.sl-purple .fill { background-color: #9b7ad8; }
+param-slider.sl-teal { color: #5dcaa5; }
+param-slider.sl-teal .fill { background-color: #5dcaa5; }
+param-slider.sl-amber { color: #d4a855; }
+param-slider.sl-amber .fill { background-color: #d4a855; }
+
+.lbl-amber { color: #8a7a65; }
+.lbl-purple { color: #6f5e94; }
+.lbl-teal { color: #4a8b76; }
 "#;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -782,8 +793,8 @@ pub(crate) fn create(
                     Label::new(cx, "EXCITER").class("section-header");
                     ExciterVis::new(cx, p.clone()).class("vis");
                     param_row(cx, "Morph", |p| &p.exciter_morph);
-                    param_row(cx, "Tilt", |p| &p.spectral_tilt);
-                    param_row(cx, "Stochastic", |p| &p.stochasticity);
+                    param_row_c(cx, "Tilt", "purple", |p| &p.spectral_tilt);
+                    param_row_c(cx, "Stochastic", "purple", |p| &p.stochasticity);
                 }).class("section");
 
                 Element::new(cx).class("section-divider");
@@ -793,9 +804,9 @@ pub(crate) fn create(
                     Label::new(cx, "VIBRATOR").class("section-header");
                     VibratorVis::new(cx, p.clone()).class("vis");
                     param_row(cx, "Damping", |p| &p.vib_damping);
-                    param_row(cx, "Brightness", |p| &p.vib_brightness);
-                    param_row(cx, "Dispersion", |p| &p.vib_dispersion);
-                    param_row(cx, "Position", |p| &p.position);
+                    param_row_c(cx, "Brightness", "purple", |p| &p.vib_brightness);
+                    param_row_c(cx, "Dispersion", "teal", |p| &p.vib_dispersion);
+                    param_row_c(cx, "Position", "teal", |p| &p.position);
                 }).class("section");
 
                 Element::new(cx).class("section-divider");
@@ -805,9 +816,9 @@ pub(crate) fn create(
                     Label::new(cx, "BODY").class("section-header");
                     BodyVis::new(cx, p.clone()).class("vis-tall");
                     param_row(cx, "Geometry", |p| &p.body_geometry);
-                    param_row(cx, "Brightness", |p| &p.body_brightness);
-                    param_row(cx, "Damping", |p| &p.body_damping);
-                    param_row(cx, "Size", |p| &p.body_size);
+                    param_row_c(cx, "Brightness", "purple", |p| &p.body_brightness);
+                    param_row_c(cx, "Damping", "teal", |p| &p.body_damping);
+                    param_row_c(cx, "Size", "teal", |p| &p.body_size);
                 }).class("section");
 
                 Element::new(cx).class("section-divider");
@@ -815,7 +826,7 @@ pub(crate) fn create(
                 // MIX
                 VStack::new(cx, |cx| {
                     Label::new(cx, "MIX").class("section-header-muted");
-                    param_row(cx, "Bleed", |p| &p.exciter_bleed);
+                    param_row_c(cx, "Bleed", "teal", |p| &p.exciter_bleed);
                     param_row(cx, "Body Mix", |p| &p.body_mix);
                 }).class("section-narrow");
 
@@ -828,8 +839,8 @@ pub(crate) fn create(
                     param_row(cx, "Drive", |p| &p.nl_drive);
                     param_row(cx, "Tape", |p| &p.nl_tape);
                     param_row(cx, "Tube", |p| &p.nl_tube);
-                    param_row(cx, "Warmth", |p| &p.nl_warmth);
-                    param_row(cx, "Tone", |p| &p.nl_tone);
+                    param_row_c(cx, "Warmth", "purple", |p| &p.nl_warmth);
+                    param_row_c(cx, "Tone", "teal", |p| &p.nl_tone);
                 }).class("section");
 
                 Element::new(cx).class("section-divider");
@@ -839,7 +850,7 @@ pub(crate) fn create(
                     Label::new(cx, "SPACE").class("section-header");
                     SpatialVis::new(cx, p.clone()).class("vis");
                     param_row(cx, "Room", |p| &p.room_size);
-                    param_row(cx, "Reverb", |p| &p.room_mix);
+                    param_row_c(cx, "Reverb", "teal", |p| &p.room_mix);
                 }).class("section-narrow");
 
                 Element::new(cx).class("section-divider");
@@ -883,10 +894,29 @@ where
     P: Param + 'static,
     FMap: 'static + Fn(&Arc<MothParams>) -> &P + Copy,
 {
+    param_row_c(cx, label, "amber", params_to_param);
+}
+
+fn param_row_c<P, FMap>(cx: &mut Context, label: &str, color: &'static str, params_to_param: FMap)
+where
+    P: Param + 'static,
+    FMap: 'static + Fn(&Arc<MothParams>) -> &P + Copy,
+{
+    let lbl_class = match color {
+        "purple" => "lbl-purple",
+        "teal" => "lbl-teal",
+        _ => "lbl-amber",
+    };
+    let sl_class = match color {
+        "purple" => "sl-purple",
+        "teal" => "sl-teal",
+        _ => "sl-amber",
+    };
     VStack::new(cx, move |cx| {
-        Label::new(cx, label).class("param-label");
+        Label::new(cx, label).class("param-label").class(lbl_class);
         ParamSlider::new(cx, Data::params, params_to_param)
             .set_style(ParamSliderStyle::FromLeft)
-            .class("widget");
+            .class("widget")
+            .class(sl_class);
     }).class("param-row");
 }

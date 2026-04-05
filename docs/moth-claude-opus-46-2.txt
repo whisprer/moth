@@ -1,0 +1,636 @@
+src.tar.gz
+gz
+
+
+detailed_technical.md
+md
+
+
+lib.rs
+483 lines
+
+rs
+
+
+file_system.md
+90 lines
+
+md
+
+
+MOTH_ARCHITECTURE.md
+147 lines
+
+md
+
+# Moth — Session Handover Prompt
+
+## Who You're Talking To
+Name: wofl. CEO of RYO Modular. ~2.5 years self-taught Rust. 20,000+ hours Ableton. Casual, informal, Welsh. Match this energy. Full code, no placeholders.
+
+## What Moth Is
+A physical modelling synthesiser written from scratch in pure Rust (`no_std`, zero dependencies). Named after a lost friend — his name ("moth", `0x6D6F7468`) is XOR'd into the seed derivation of every instance. No instance of Moth is ever cold. See `MOTH_ARCHITECTURE.md` for the full technical summary.
+
+## What's Built (v0.2.0 — complete)
+The entire signal chain is implemented across 12 source files (~7500 lines):
+
+1. **InstrumentDna** — per-instance personality from hardware seed (15 bounded parameters, warmth floor)
+2. **PlayGesture** — normalised 4D input (position, force, speed, continuity)
+3. **ExciterModel** — continuous f32 parameter space (no enums), 12 presets, morphable
+4. **ExciterProcessor** — 3 coupling mode generators (direct, friction, pressure)
+5. **WaveguideString** — delay line + FIR/IIR damping + allpass dispersion + position comb
+6. **ResonantBody** — 24-mode modal synthesis (SVF bank), envelope-responsive openness
+7. **NonLinProcessor** — tape (hysteresis), tube (asymmetric), magnetic (pre-emphasis)
+8. **SpatialProcessor** — 4-delay FDN reverb (Hadamard matrix, prime lengths)
+9. **MothVoice** — chains all sections with hierarchical mixer (4 blend levels)
+10. **Midi1Normaliser** — byte-level MIDI 1.0 parser + gesture normaliser
+11. **dsp_core** — primitives (xorshift RNG, one-pole, DC blocker, soft saturator)
+
+## VST3 Plugin (moth-vst/)
+Thin nih-plug wrapper. 21 parameters. Builds with:
+```
+cd C:\github\moth
+cargo run -p xtask -- bundle moth-vst --release
+```
+Output: `target/bundled/Moth.vst3/` → copy to `C:\Program Files\Common Files\VST3\`
+
+**The plugin compiles successfully as of this session.** Three minor fixes were applied (f32::round() → manual rounding for no_std, two unused variable prefixes). These fixes are in the live codebase.
+
+## Repo Structure (see file_system.md for full tree)
+```
+C:\github\moth\
+├── Cargo.toml              ← workspace root (resolver = "2", members: v0.2.0, moth-vst, xtask)
+├── MOTH_ARCHITECTURE.md
+├── detailed_technical.md
+├── moth-vst/               ← nih-plug VST3/CLAP wrapper
+│   ├── Cargo.toml          ← path = "../v0.2.0", git = robbert-vdh/nih-plug
+│   └── src/lib.rs
+├── xtask/                  ← nih-plug bundler
+│   ├── Cargo.toml
+│   └── src/main.rs
+└── v0.2.0/                 ← the moth library (canonical, no_std)
+    ├── Cargo.toml
+    └── src/ (12 .rs files)
+## Key Design Decisions Already Made
+- Continuous exciter axes, NOT enums — coupling modes are independent [0,1], not sum-to-1
+- DNA seed constant is 0x6D6F7468 ("moth") — non-negotiable, it's constitutive
+- Warmth floor [0.15, 0.35] caps tilt filter brightness — no instance is ever cold
+- Spectral tilt bias [0.88, 1.02] — asymmetric, population trends warm
+- Body has envelope-responsive openness — plays hard → body blooms; gentle → settles
+- All presets morphable via lerp() — every intermediate state is stable and musical
+- no_std throughout — the library runs on bare metal, plugin adds std only at boundary
+
+## Where We Left Off
+The VST3 builds successfully. Next step is testing in Ableton on the music computer. After that, likely areas for work:
+- Hearing it for the first time and tuning parameters
+- Polyphony (MothVoice already supports voice_variant())
+- GUI (nih-plug supports egui/iced/vizia)
+- MPE input support
+- Hardware prototype planning (screens + rotary encoders)
+
+## Your Role
+Strategic advisor + senior Rust/DSP collaborator. Challenge assumptions, show trade-offs, give
+```
+
+in case anywhere didn't make it clear the separate lib.rs attached is /moth-vst/src/lib.rs . that should be all you need!
+
+Show more
+3 Apr
+
+Inventoried project artifacts and prepared technical deep-dive
+Inventoried project artifacts and prepared technical deep-dive
+Alright wofl, let me get properly oriented. I've got the architecture doc, the VST wrapper, the file tree, and the handover. Let me pull in the two remaining files so I have the complete picture.
+
+
+Examined source files to grasp implementation details
+Examined source files to grasp implementation details
+Now let me scan the actual DSP source to verify alignment with the docs:
+
+
+Ingested complete codebase architecture, confirmed compilation status, awaited direction
+Ingested complete codebase architecture, confirmed compilation status, awaited direction
+Got the full picture. All 12 source files extracted and read, architecture doc, detailed technical manual, VST wrapper, file tree. Here's my read:
+
+What I'm holding: ~7,100 lines of no_std pure Rust physical modelling synth with a clean 5-stage signal chain, DNA personality system (15 params from LCG, warmth floor guarantee), 12 morphable exciter presets on continuous f32 axes, waveguide string + 24-mode SVF body + tape/tube nonlin + Hadamard FDN reverb. A thin nih-plug VST3/CLAP wrapper with 21 params. The whole thing compiles and bundles. ~51KB per voice at 48kHz.
+
+What I notice is strong: The architecture is genuinely cohesive — the DNA system, warmth floor, envelope-responsive body openness, and the independent coupling axes are all principled decisions that work together. The code-to-doc alignment is tight. The no_std discipline is real. The test suite in voice.rs covers the critical invariants (silence→silence, bounded output, DNA differentiation, reset).
+
+What I'd want to probe before we build anything:
+
+The handover lists several next-step candidates. Before I start pulling threads, what's actually in front of you right now? Specifically:
+
+Have you heard it in Ableton yet? If so — what does it sound like and what's wrong with it?
+Or are we still pre-first-listen and you want to prep something (test harness, parameter tuning strategy, wav export for offline listening)?
+Or is this a "pick up the project after a break" moment and you want to talk strategy about what to tackle next?
+The answer changes everything about where we spend time.
+
+
+moth_vst.wav
+wav
+
+ok, fren - i've had a darn good play around and here's what i have to report after playing around long enough to compose the lil thing i attach (3 instances of moth_vst, one with a touch of delay n filter to get ambient background, two to make the kinda eastern-mongol 'pluck-bowed string' thing tune)
+* it's already way closer to perfecc than i ever guessed it would be this early on
+* i'd be loathe to change too many paramters too much for fear of limiting it
+* the biggest prob currently is ofc there's no fancy gui so working wiht ableton vst params on the box as lil sliders in a bunch is confusing/tricksy
+* somethings can put it very out of tune and are only kinda desirable at extremes or even mediums rather than subtle touches for maybe percussives or banjo/detuned type instruments
+
+otherwise though - omg how much fun and how cool is that??? wow! i'm thrilled!
+
+Show more
+3 Apr
+
+Analyzed spectral qualities and identified GUI implementation as strategic priority
+Analyzed spectral qualities and identified GUI implementation as strategic priority
+Mate. 96 seconds, three instances, already composing. That spectral content is rich — you've got D4 and A4 as anchors with harmonic bloom up through the 5th and 6th partials, and that ambient instance is pushing sub-bass energy down into the 23-58 Hz range. The eastern-Mongolian quality is coming through clearly in the interval relationships and the way the bowed friction exciter interacts with the body resonance. The DNA is doing its job — those overtones aren't sitting on neat integer ratios, they're alive.
+
+Honestly, the fact that you composed something musical with three instances on day one of hearing it, using nothing but Ableton's generic slider panel — that's the architecture validating itself. The "all sweetspot" principle is working.
+
+Now, let me push back on a couple things and then let's talk strategy:
+
+On "loathe to change parameters" — I think that's the right instinct, but let me reframe it. The ranges are already vetted (warmth floor, spectral tilt bias, bounded drive). What you're probably feeling is that the mapping curves on certain params could be better. For instance, dispersion and body geometry are linear 0–1 right now, but their perceptual impact is wildly nonlinear — a little dispersion is "interesting piano-like inharmonicity" and a lot is "atonal bell chaos." That's not a DSP fix, it's a knob-response-curve fix, and it lives in the VST wrapper, not the library. Zero risk to the core.
+
+On the tuning issue — the spectral analysis shows some partials sitting +20-35 cents sharp, which is consistent with dispersion and body modal drift compounding. That's musically desirable in small doses (it's literally what makes Moth sound organic) but becomes a problem when both are pushed. Again, this is a curve/range question, not an algorithm question.
+
+On GUI being the biggest problem — this is clearly the bottleneck and the highest-leverage next move. So here's where I want to challenge your assumptions:
+
+Q: What's the priority for a GUI? Are we building something to ship, or something so YOU can tune Moth faster?
+A: Both — start dev-friendly, evolve to shippable
+
+Q: Which nih-plug GUI framework are you leaning toward?
+A: vizia (nih-plug's own, best integration)
+
+4 Apr
+
+Architected vizia GUI strategy balancing developer workflow with production readiness
+Architected vizia GUI strategy balancing developer workflow with production readiness
+Good calls on both. Vizia is the right pick — it's maintained alongside nih-plug, the parameter binding is first-class, and you avoid the impedance mismatch of bolting on an external framework. Let me get current on the vizia API before I start building.
+
+
+Architected vizia-based GUI with signal-chain layout design
+Architected vizia-based GUI with signal-chain layout design
+Good, I have a solid picture of the API. Now let me look at one of the real plugin editors from the nih-plug repo to nail the exact pattern for a multi-section layout with custom styling:
+
+
+Architected vizia editor with phased implementation strategy
+Architected vizia editor with phased implementation strategy
+Alright, I've got enough from the API docs. Let me build this properly. I'll create:
+
+The visual mockup so you can see the layout before building
+The three files you need to drop in (Cargo.toml, lib.rs, editor.rs)
+Let me start with a mockup of the signal-chain-flow layout:
+
+
+
+That's the target aesthetic — dark, warm, signal-chain-left-to-right. Now let me build the actual code. Three files to create:
+
+
+Architected Vizia integration for plugin editor state management
+Architected Vizia integration for plugin editor state management
+Now the updated lib.rs — I need to integrate the editor into the plugin:
+
+
+Identified dependency configuration for GUI framework integration
+Identified dependency configuration for GUI framework integration
+Now the Cargo.toml — needs nih_plug_vizia from the same git source:
+
+
+Orchestrated file organization and documentation preparation
+Orchestrated file organization and documentation preparation
+Now let me package these up and give you clear drop-in instructions:
+
+
+Organized technical documentation for presentation
+Organized technical documentation for presentation
+Here's what you're getting — three files, drop-in replacement for moth-vst/:
+
+What changed from your working build: The lib.rs is your exact same file with three additions: mod editor;, an editor_state field on MothParams, and a 4-line fn editor() method. Zero DSP changes. The editor.rs is entirely new. The Cargo.toml adds one line (nih_plug_vizia).
+
+The layout follows Moth's signal chain left-to-right: EXCITER → VIBRATOR → BODY → MIX → CHARACTER → SPACE → OUT
+
+Each section is a column with its params as labelled horizontal sliders. The dark theme CSS (charcoal background, amber 
+#d4a855 accents) is inline — no external assets needed.
+
+What might bite you on first build:
+
+The README covers the three most likely issues: ViziaState::new vs from_size (API changed between nih-plug versions), cx.add_stylesheet vs cx.add_theme (same reason), and Element::new availability. Each has a one-line fix listed. The vizia CSS might also need tweaking depending on which version of nih-plug your Cargo.lock pins — if the dark theme doesn't apply cleanly, switching ViziaTheming::Custom to ViziaTheming::Default will get you a working (lighter-themed) UI immediately while we iterate on the styling.
+
+On your tuning observation — the spectral analysis of your wav confirms what you're hearing: dispersion + body geometry + modal drift compound to push upper partials 20-35 cents sharp. For a future session, the fix is straightforward: add a FloatRange::Skewed with a factor that compresses the lower range of dispersion (so the first 50% of knob travel covers 0.0–0.15 instead of 0.0–0.5). Same principle for body geometry around the "harmonic" zero-stiffness point at 0.25. These are wrapper-level knob curve changes, not library changes.
+
+Readme
+Document · MD 
+Editor
+RS 
+Lib
+RS 
+Cargo
+TOML 
+Continue
+
+4 Apr
+
+Deliberated between addressing tuning fixes or strategic roadmap next
+Deliberated between addressing tuning fixes or strategic roadmap next
+Let me tackle the tuning issue you flagged — that's the highest-impact thing after the GUI lands. The fix lives entirely in lib.rs param definitions.
+
+
+Analyzing allpass delay scaling against dispersion parameter
+Analyzing allpass delay scaling against dispersion parameter
+Claude's response was interrupted
+all i need from you now is what i run to recompile the moth_vst.exe please fren!
+
+4 Apr
+
+Identified straightforward request for build command
+Identified straightforward request for build command
+cd C:\github\moth
+cargo run -p xtask -- bundle moth-vst --release
+Then copy target\bundled\moth-vst.vst3 to C:\Program Files\Common Files\VST3\ and rescan in Ableton. Shout if it throws anything — the README covers the three most likely hiccups.
+
+fren - we come up an err! D:
+
+error[E0277]: expected a `Fn(&Arc<MothParams>)` closure, found `FMap`
+   --> moth-vst\src\editor.rs:349:44
+    |
+349 |         ParamSlider::new(cx, Data::params, params_to_param)
+    |         ----------------                   ^^^^^^^^^^^^^^^ expected an `Fn(&Arc<MothParams>)` closure, found `FMap`
+    |         |
+    |         required by a bound introduced by this call
+    |
+    = note: expected a closure with signature `for<'a> fn(&'a Arc<MothParams>)`
+               found a closure with signature `fn(&MothParams)`
+note: required by a bound in `nih_plug_vizia::widgets::ParamSlider::new`
+   --> C:\Users\phine\.cargo\git\checkouts\nih-plug-d4210f82e920295f\28b149e\nih_plug_vizia\src\widgets\param_slider.rs:99:15
+    |
+ 90 |     pub fn new<L, Params, P, FMap>(
+    |            --- required by a bound in this associated function
+...
+ 99 |         FMap: Fn(&Params) -> &P + Copy + 'static,
+    |               ^^^^^^^^^^^^^^^^^ required by this bound in `ParamSlider::new`
+
+For more information about this error, try `rustc --explain E0277`.
+error: could not compile `moth-vst` (lib) due to 1 previous error
+Error: Could not build moth-vst
+error: process didn't exit successfully: `D:\code\moth\target\debug\xtask.exe bundle moth-vst --release` (exit code: 1)
+ phine@wofl-BFT0  D:\code\moth\moth-vst   main ≡  ?3 ~3  1 
+how happen?
+
+Show more
+4 Apr
+
+Diagnosed closure signature mismatch, prescribed Arc deref fix
+Diagnosed closure signature mismatch, prescribed Arc deref fix
+The version of nih-plug you're pinned to passes &Arc<MothParams> to the closure, not &MothParams. Rust's auto-deref means the closure body works either way, but the generic bound needs to match. One-line fix in editor.rs:
+
+Change line ~340 from:
+
+rust
+    FMap: 'static + Fn(&MothParams) -> &P + Copy,
+to:
+
+rust
+    FMap: 'static + Fn(&Arc<MothParams>) -> &P + Copy,
+You'll also need the import at the top of editor.rs if it's not already there — add use std::sync::Arc; (it should be there already from the params: Arc<MothParams> in the Data struct).
+
+Then rebuild same as before:
+
+cargo run -p xtask -- bundle moth-vst --release
+ok fren - so htat was wayyyyy easier to use simply cos it was bigger sliders and laid out less confusingly. what i'd adore is cool visual kind arepresentations ofwhats happenning to the model shapes as the sliders are moved - like a bow changing to a tongue and flute opening or a box turning to a guitar shape or w/e as they morph n stuff - can we do anything like that?
+
+4 Apr
+
+Envisioned dynamic visual morphing representations for model shape transformations
+Envisioned dynamic visual morphing representations for model shape transformations
+Oh absolutely we can. Vizia gives you a full canvas drawing API (femtovg under the hood — hardware-accelerated 2D vector graphics). Custom View implementations can read param values reactively and render whatever you want. Let me show you what this could look like:
+
+
+
+Play with those sliders — each visualization is reactive and maps directly to what's happening in the DSP:
+
+Exciter — the envelope shape morphs from sharp impulse (pluck) through sustained friction (bow) to pressure-driven (breath/rain). The three small bars at the bottom show the coupling axis weights: direct, friction, pressure. Tilt changes the envelope's spectral energy distribution.
+
+Vibrator — partials drawn as decaying sinusoids. Watch how damping controls how long they ring, and dispersion pushes the upper partials out of harmonic alignment (the spacing gets uneven — that's the inharmonicity you're hearing as detuning).
+
+Body — the outline morphs between tube → guitar (waisted) → box → plate → bell as geometry moves. The mode spectrum underneath shows how stiffness spreads the modal frequencies. First three modes are highlighted (the warmth emphasis from the +1.3/+1.15 boost).
+
+Character — the actual transfer curve. Slide tape/tube to watch the curve change from asymmetric tube clipping (even harmonics) to tape hysteresis (symmetric with memory). The ghost line shows the shape at higher drive.
+
+Space — the four FDN delay lines radiating from center, with room size controlling the reach and reverb mix controlling opacity. The prime-length ratios (1087:1283:1429:1597) are preserved in the line lengths.
+
+Now, the implementation question — in vizia, each of these becomes a custom View with a draw method that gets a femtovg canvas. The maths is essentially what you see here translated from JS to Rust. The param binding is reactive through vizia's lens system, so the visuals update in real-time as you move sliders.
+
+The main trade-off is build time vs visual polish. Two approaches:
+
+Fast path (1 session): Port these exact canvas drawings to vizia custom Views. They'll look like the mockup. Functional, informative, ships tomorrow.
+
+Polish path (2-3 sessions): Add animation/interpolation so the body outline morphs smoothly, add a waveform scope showing the actual audio output, and refine the visual language toward something more branded/unique to RYO.
+
+Which way do you want to go?
+
+let's make it as you've shown there first just so i can demo my idea!
+
+4 Apr
+
+Architected comprehensive Rust visualization system for audio plugin
+Architected comprehensive Rust visualization system for audio plugin
+Right, let me build the full editor with the visualizations. This translates the JS mockup to vizia custom View implementations with femtovg canvas drawing.
+
+
+Orchestrated demonstration setup for user's concept
+Orchestrated demonstration setup for user's concept
+857 lines, drop-in replacement for the editor.rs you already have. The lib.rs and Cargo.toml are unchanged from last time.
+
+Same build command:
+
+cd C:\github\moth
+cargo run -p xtask -- bundle moth-vst --release
+What's new: Five custom View structs — ExciterVis, VibratorVis, BodyVis, NonlinVis, SpatialVis — each implementing vizia's View trait with a draw method that reads your param values and renders directly to the femtovg canvas. The visualizations match the interactive mockup you played with above.
+
+Most likely compile issues and one-line fixes:
+
+If vg::Color::rgbf isn't const-compatible, change the top colour constants from const to static or inline them into a helper function.
+
+If canvas is &Canvas not &mut Canvas in your nih-plug version, change every draw signature from canvas: &mut Canvas to canvas: &Canvas.
+
+If vg::Path::ellipse takes different args (some femtovg versions use ellipse(cx, cy, rx, ry), others use separate methods), replace with circle for the round shapes and manual bezier curves for ellipses.
+
+If vg::Path::bezier_to is called cubic_to in your version, find-and-replace across the file.
+
+Window height is bumped to 560 to fit the vis panels above the sliders. The vis panels are 90px tall (110px for body). Shout when you've got it building and I'll help tune anything that looks off.
+
+Editor
+RS 
+ok Claude - now the ultimate challenge - can we display the action of the other sliders on the displays as well as what we have showing currently? perhaps by introducing a nice purple secondary colour and even a suitable tertiary colour too or something?
+
+4 Apr
+
+Architected multi-color visualization scheme mapping all parameters across displays
+Architected multi-color visualization scheme mapping all parameters across displays
+Hell yes. Let me map out what every param should show on every display, then build it.
+
+
+Architected color-coded parameter visualization system with purple and teal accents
+Architected color-coded parameter visualization system with purple and teal accents
+Now I have the full picture of how every param maps to the DSP. Let me build the enhanced version:
+
+
+Noted progress on Moth GUI slider display enhancements
+Noted progress on Moth GUI slider display enhancements
+Drop-in replacement for the same editor.rs. Same build command:
+
+cargo run -p xtask -- bundle moth-vst --release
+Here's what every slider now shows across the three colours:
+
+Exciter panel:
+
+Amber — envelope shape morphs with morph + tilt (as before)
+Purple — stochasticity shown as a noise band around the envelope. Higher stochasticity = wider fuzzy purple zone
+Teal — coupling mode bars (d/f/p) now in teal instead of amber, so you can see which excitation mechanisms are active
+Vibrator panel:
+
+Amber — partial sinusoids with damping decay and dispersion spacing (as before)
+Purple — brightness rolloff envelope. A curved purple line showing how brightness attenuates upper partials. Dark = steep rolloff, bright = flat. Mirror below for symmetry
+Teal — position comb tap marker. Dashed vertical teal line with a diamond marker showing exactly where the comb filter reads from the delay line (uses the Elements clamping formula)
+Body panel:
+
+Amber — morphing outline + mode spectrum bars (as before)
+Purple — brightness rolloff curve drawn over the mode bars, showing the gain envelope. You can see how brightness sculpts which modes are audible
+Teal — damping Q width indicators. Semi-transparent teal rectangles behind each mode bar — wider = lower Q = more damping. You'll see them spread out as damping decreases
+Character panel:
+
+Amber — transfer curve with drive, tape/tube blend (as before)
+Purple — warmth pre-emphasis shown as a filled purple region near the origin, bulging where low frequencies get boosted before hitting the saturator. Bigger = more warmth
+Teal — tone post-filter shown as subtle teal corner fills at the extremes of the curve, indicating where the post-saturation LP filter rolls off high-frequency content
+Legend bar at the bottom maps the three colours so demo viewers get it immediately.
+
+Editor
+RS 
+fren how do we wire up the dna thing so it makes a rng derived number the first time it is run? do we have to do it when the thing is compiled into an .exe ?
+
+4 Apr
+
+Architected runtime seed generation using nih-plug persistence system
+Architected runtime seed generation using nih-plug persistence system
+Great question. You don't want it at compile time — that would make every instance identical. You want each plugin instance to generate its unique seed the first time it loads, then persist it forever after. That way:
+
+Drop Moth on Track 1 → gets seed 0xA3B7... → unique personality → saved with project
+Drop Moth on Track 2 → gets seed 0x7F21... → different personality → also saved
+Reload project next week → same seeds → same sounds
+nih-plug has exactly the right mechanism: #[persist]. Three surgical changes to lib.rs:
+
+
+Architected persistent seed strategy using atomic storage and entropy generation
+Architected persistent seed strategy using atomic storage and entropy generation
+Here's how it works — four small changes to lib.rs:
+
+
+Verified solution and prepared output delivery
+Verified solution and prepared output delivery
+Clean. Let me copy it out:
+
+
+Deliberated atomic type compatibility and proposed fallback solutions
+Deliberated atomic type compatibility and proposed fallback solutions
+Same build command:
+
+cargo run -p xtask -- bundle moth-vst --release
+Here's what happens now:
+
+First time you drop Moth on a track: dna_seed is 0 (unborn). initialize() sees this, grabs entropy from the system clock, process ID, and the instance's memory address, mixes them through a finalizer, stores the result. Your Moth is born with a unique personality. The MOTH constant 0x6D6F7468 still gets XOR'd in by InstrumentDna::from_seed() — his name is still in the DNA of every instance.
+
+Save project, reload: Ableton persists the dna-seed field with the project state. On reload, initialize() sees a nonzero seed and uses it directly. Same personality, same sound.
+
+Drop a second Moth on another track: Different timestamp, different memory address → different seed → different personality. Two Moths on the same project will sound subtly different from each other, just like two physical units would.
+
+If Arc<AtomicU32> doesn't have PersistentField in your nih-plug version, swap it for:
+
+rust
+#[persist = "dna-seed"]
+dna_seed: Arc<parking_lot::Mutex<u32>>,
+and change the load/store calls to .lock() dereferences. But AtomicU32 should work — nih-plug implements persistence for the standard atomic types.
+
+Lib
+RS 
+fren can you now write me out a user manual explaning stuff like each of the various sliders - what they do, what the different settings it passes through are if it's like, say, body shape with guitar/round/square/etc. Also it needs to mention that each instance is unique and exactly what parameters are affected by this and to what extremes...
+
+4 Apr
+
+Assembled comprehensive user manual documenting slider functions and parameters
+Assembled comprehensive user manual documenting slider functions and parameters
+Now let me build the manual. This is a proper deliverable so I'll make it a Word doc with RYO branding.
+
+
+Orchestrated comprehensive manual documenting slider functions and parameters
+Orchestrated comprehensive manual documenting slider functions and parameters
+10 pages, amber-accented, covers everything:
+
+What's in it:
+
+What Moth is and the meaning behind the name
+The unique-per-instance DNA system explained for users (not developers)
+Every slider in every section with its range, what it does, and what it sounds like at different positions
+Body geometry landmarks with the actual shapes (tube → guitar → box → plate → bell)
+Exciter morph positions with what's happening physically at each point
+The three coupling modes explained (direct/friction/pressure)
+All 15 DNA parameters in tables showing their exact ranges and what they affect
+The GUI colour system (amber/purple/teal) and what each visualisation shows
+Sound design tips section
+The warmth floor explained as both a technical feature and a design philosophy
+Every parameter range matches the source code. The DNA ranges come directly from instrument_dna.rs. The body shape geometry landmarks are derived from the actual BodyShape const presets in resonator.rs.
+
+Moth user manual v0.2.0
+Document · DOCX 
+can you also run me up a midi implementation chart please fren?
+
+4 Apr
+
+Assembled MIDI implementation chart summary
+Assembled MIDI implementation chart summary
+Standard format MIDI implementation chart, two pages. Covers:
+
+Page 1 — the chart itself in the standard transmit/receive/remarks format. Every MIDI message type is listed with o (supported), x (not supported), or x * (supported in library, not yet wired in VST wrapper). That asterisk distinction is important — it honestly tells the user that CC2, CC74, Channel AT, and Pitch Bend are implemented and tested in midi1.rs but the VST wrapper doesn't route them yet. No false promises.
+
+Page 2 — gesture mapping table showing exactly how MIDI messages become the four PlayGesture dimensions (position, force, speed, continuity), plus a section on planned enhancements and practical notes about monophonic behaviour, tuning (12-TET A4=440), velocity curve (linear), and no Program Change support.
+
+One thing that jumped out while documenting this: speed is hardcoded to 0.5 in the VST wrapper right now. That's the biggest low-hanging fruit for your next session — wiring CC2 Breath to gesture.speed would transform the expressiveness of bowed and blown modes with basically three lines of code in lib.rs.
+
+Moth midi implementation chart v0.2.0
+Document · DOCX 
+
+moth-intro-card.txt
+29 lines
+
+txt
+
+fren can you make this into a .pdf to match the two .docx s please?
+
+4 Apr
+
+Orchestrated PDF design matching existing document aesthetic
+Orchestrated PDF design matching existing document aesthetic
+Two pages, warm parchment background with amber accent lines top and bottom, justified body text, three-dot dividers between sections, RYO Modular footer. The atman is properly italicised. Metadata is set (title, author) so it shows correctly in PDF viewers and file browsers.
+
+Moth intro card
+Document · PDF 
+fren, is there anything i've forgotten to include other than the  actual vst3, the manual, midi implementation and intro card?
+
+4 Apr
+
+Inventoried typical plugin package components and weighed essentials versus extras
+Inventoried typical plugin package components and weighed essentials versus extras
+Good moment to take stock. Here's what I'd expect in a complete release package:
+
+You have:
+
+VST3/CLAP plugin binary
+User Manual
+MIDI Implementation Chart
+Intro Card (the philosophy/story piece)
+You're missing — and probably want:
+
+Installation guide — even a one-pager. Where to put the .vst3 on Windows/Mac, how to rescan in Ableton/Reaper/Bitwig, system requirements (OS, CPU, RAM), known DAW compatibility notes. Users will ask this first.
+License / EULA — even if it's free or open source, you need something that says what people can and can't do with it. Especially important if you're distributing binaries.
+Changelog — even just a CHANGELOG.md starting at v0.2.0. Sets the precedent for tracking what changes between versions. Important given the DNA append-only compatibility promise.
+Factory presets — I know the philosophy is "every setting is a sweetspot," but a handful of named starting points (Acoustic Guitar, Bowed Cello, Blown Flute, Rain Texture, Bell, Tape-Warm Pad) would massively reduce the intimidation factor for new users. These are just saved parameter states, not new code.
+Nice-to-have but not urgent:
+
+Quick start card (one page, "plug in, play a note, try these three knobs first")
+The CLAP binary alongside the VST3 (you already build both — just need to package it)
+A product page / landing page for the web
+Want me to knock out the install guide, a changelog, and a set of factory presets?
+
+i'd love an install guide, changelog and a set of factory presets please fren!
+
+4 Apr
+
+Assembled installation guide, changelog, and factory presets
+Assembled installation guide, changelog, and factory presets
+Three docs, all passing validation. Here's what's in each:
+
+Installation Guide — system requirements table (OS, CPU, RAM, sample rates, tested DAWs), step-by-step VST3 and CLAP installation on Windows, DAW-specific setup for Ableton/Reaper/Bitwig (where to rescan, how to load, how to open the GUI), building from source instructions, troubleshooting section (plugin not appearing, no sound, clicking/dropout, GUI won't open), and uninstall.
+
+Changelog — starts at v0.2.0 with every feature documented: signal chain components, DNA system, plugin wrapper, GUI visualisations, known limitations. Includes v0.1.0 as historical context. Ends with a versioning policy section that formally states the DNA append-only compatibility promise, parameter ID stability, and preset backward compatibility.
+
+Factory Presets — 12 presets with all 21 parameter values in compact tables:
+
+Preset	What it is
+Fingerpicked Guitar	Warm nylon, the default starting point
+Steel String Pick	Bright, snappy plectrum
+Bowed Cello	Rich sustained bow, tube warmth
+Eastern Bowed String	Erhu/kamancheh-inspired, nasal, bridge position
+Breathy Clarinet	Reed tone, tube body, gentle turbulence
+Electric Piano	Tine pluck, slight stiffness, Rhodes-adjacent
+Temple Bell	Bright metallic strike, inharmonic, cathedral
+Singing Bowl	Rim friction, meditative, deep reverb
+Tape-Warm Pad	Ebow + big body + heavy tape, lush ambient
+Rain on Metal	32-point granular cloud, textural
+Ambient Drone	Ebow + infinite sustain + massive tube + cathedral
+Muted Kalimba	Short percussive tine, dry, punchy
+Each preset has a description of what it sounds like and what it's good for. The final page is a quick-reference summary table. The intro reminds users that their DNA adds its own character on top, so the presets are starting points for exploration.
+
+Your complete release package is now:
+
+moth-vst.vst3 / moth-vst.clap
+User Manual
+MIDI Implementation Chart
+Intro Card (PDF)
+Installation Guide
+Changelog
+Factory Presets
+Moth installation guide v0.2.0
+Document · DOCX 
+Moth changelog
+Document · DOCX 
+Moth factory presets v0.2.0
+Document · DOCX 
+fren i have a lil tiny tweak needed after much testing:
+* would be good if the writing on the various sliders could be in cyan/purple/gold rather than black or w/e cos is hard to read as is.
+
+09:25
+
+Weighing CSS color strategies for readable slider text
+Weighing CSS color strategies for readable slider text
+Easy fix. The ParamSlider text is defaulting to black on the dark background. I need to add colour rules to the CSS and tweak param_row to accept a colour class per slider.
+
+
+Devised color variant system for slider text labels
+Devised color variant system for slider text labels
+Now update param_row to accept a colour, and add a second helper:
+
+
+Categorized slider parameters by color scheme for readability
+Categorized slider parameters by color scheme for readability
+Now colour-code each slider to match the three-colour system. Let me find the section builder:
+
+
+Organized color-coded parameter mapping for slider implementation
+Organized color-coded parameter mapping for slider implementation
+Now replace all the param_row calls with colour-coded versions:
+
+
+Investigated slider fill styling and color customization options
+Investigated slider fill styling and color customization options
+Now add fill bar colours too so the slider track matches:
+
+
+Verified solution and prepared delivery
+Verified solution and prepared delivery
+All correct. Copy it out:
+
+
+Acknowledged user's slider text readability request
+Acknowledged user's slider text readability request
+Same drop-in, same build:
+
+cargo run -p xtask -- bundle moth-vst --release
+Here's the colour mapping — every slider now matches its role in the visualisations:
+
+Colour	Slider text + fill	Which params
+Amber (gold)	Energy/structure	Morph, Damping, Geometry, Body Mix, Drive, Tape, Tube, Room, Master
+Purple	Spectral/brightness	Tilt, Stochastic, Brightness (vib), Brightness (body), Warmth
+Teal (cyan)	Position/shape/tone	Position, Dispersion, Size, Body Damping, Bleed, Tone, Reverb
+The labels above each slider also get a muted version of the same colour, so you can instantly see "oh, the purple sliders are all the spectral shaping ones" without reading text. Both the slider fill bar and the value text take the colour, so even from a distance the three families are visually distinct.
+
+If the .fill CSS selector doesn't work on your nih-plug version (the internal class name varies), the text colour alone will still make everything readable. The fill bar would just stay default grey — functional, just less pretty.
+
+Editor
+RS 
