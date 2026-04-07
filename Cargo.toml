@@ -1,3 +1,0 @@
-[workspace]
-resolver = "2"
-members = ["v0.2.0", "moth-vst", "xtask"]
