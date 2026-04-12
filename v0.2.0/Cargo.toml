@@ -1,9 +1,3 @@
-[package]
-name = "moth"
-version = "0.1.0"
-edition = "2021"
-description = "A physical modelling synthesiser — maths-first, pure Rust. Each instance alive and unrepeatable."
-
-[dependencies]
-
-[dev-dependencies]
+[workspace]
+resolver = "2"
+members = ["v0.2.0", "moth-vst", "xtask"]
