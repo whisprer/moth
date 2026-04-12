@@ -111,13 +111,10 @@ const STYLE: &str = r#"
 .legend-label { font-size: 9; color: #6b6560; width: auto; height: auto; }
 
 param-slider { background-color: #252320; border-radius: 3px; color: #d4a855; }
-param-slider .fill { background-color: #d4a855; }
+param-slider .fill { background-color: #4a4640; }
 param-slider.sl-purple { color: #9b7ad8; }
-param-slider.sl-purple .fill { background-color: #9b7ad8; }
 param-slider.sl-teal { color: #5dcaa5; }
-param-slider.sl-teal .fill { background-color: #5dcaa5; }
 param-slider.sl-amber { color: #d4a855; }
-param-slider.sl-amber .fill { background-color: #d4a855; }
 
 .lbl-amber { color: #8a7a65; }
 .lbl-purple { color: #6f5e94; }
