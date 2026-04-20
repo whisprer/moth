@@ -144,7 +144,12 @@ impl MothVoice {
     /// `model` — the current exciter model (may be morphing).
     /// `gesture` — the current play gesture (from MIDI normaliser).
     /// `output` — filled with the final audio. Length must be ≤ MAX_BLOCK.
-    pub fn process(&mut self, model: &ExciterModel, gesture: &PlayGesture, output: &mut [f32]) {
+    pub fn process(
+        &mut self,
+        model: &ExciterModel,
+        gesture: &PlayGesture,
+        output: &mut [f32],
+    ) {
         self.process_with_external(model, gesture, None, 0.0, output);
     }
 
@@ -199,7 +204,13 @@ impl MothVoice {
                 let ext_gain = ext_mix;
                 let ext_len = ext.len().min(len);
                 for i in 0..ext_len {
-                    exc[i] = exc[i] * int_gain + ext[i] * ext_gain;
+                    // When int_gain ≈ 0, skip the multiply entirely to
+                    // avoid NaN * 0.0 = NaN propagation from exciter state.
+                    exc[i] = if int_gain > 0.01 {
+                        exc[i] * int_gain + ext[i] * ext_gain
+                    } else {
+                        ext[i] * ext_gain
+                    };
                 }
             }
         }
@@ -359,11 +370,8 @@ mod tests {
         voice_a.process(&ExciterModel::PLUCK, &gesture, &mut out_a);
         voice_b.process(&ExciterModel::PLUCK, &gesture, &mut out_b);
 
-        let diff: f32 = out_a
-            .iter()
-            .zip(out_b.iter())
-            .map(|(a, b)| (a - b).abs())
-            .sum();
+        let diff: f32 = out_a.iter().zip(out_b.iter())
+            .map(|(a, b)| (a - b).abs()).sum();
         assert!(diff > 0.001, "Different DNA should sound different");
     }
 
@@ -397,9 +405,7 @@ mod tests {
         voice.set_body(&BodyShape::GUITAR_SMALL);
 
         let gesture = PlayGesture {
-            force: 0.8,
-            continuity: true,
-            ..PlayGesture::SILENT
+            force: 0.8, continuity: true, ..PlayGesture::SILENT
         };
         let mut out = [0.0f32; BLOCK];
         voice.process(&ExciterModel::PLUCK, &gesture, &mut out);

@@ -22,6 +22,9 @@ struct MothPlugin {
     current_note: Option<u8>,
     /// Current gesture state.
     gesture: PlayGesture,
+    /// Fingerprint of our previous output — detects feedback when the host
+    /// feeds our own output back as input (no external routing configured).
+    prev_out_sample: f32,
 }
 
 impl Default for MothPlugin {
@@ -31,6 +34,7 @@ impl Default for MothPlugin {
             voice: None,
             current_note: None,
             gesture: PlayGesture::SILENT,
+            prev_out_sample: 0.0,
         }
     }
 }
@@ -226,9 +230,13 @@ impl Default for MothParams {
             .with_string_to_value(formatters::s2v_f32_gain_to_db()),
 
             // ── External input ──
-            ext_mix: FloatParam::new("Ext Mix", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 })
-                .with_unit(" mix")
-                .with_value_to_string(formatters::v2s_f32_rounded(2)),
+            ext_mix: FloatParam::new(
+                "Ext Mix",
+                0.0,
+                FloatRange::Linear { min: 0.0, max: 0.99 },
+            )
+            .with_unit(" mix")
+            .with_value_to_string(formatters::v2s_f32_rounded(2)),
         }
     }
 }
@@ -426,33 +434,46 @@ impl Plugin for MothPlugin {
         let master_gain = self.params.master_gain.value();
         let ext_mix = self.params.ext_mix.value();
 
-        // Capture external input (stereo → mono) before we overwrite the buffer.
         let mut ext_buf = [0.0f32; 4096];
         let total = num_samples.min(4096);
 
-        if ext_mix > 0.001 {
-            for (i, mut frame) in buffer.iter_samples().enumerate() {
-                if i >= total {
-                    break;
+        // ── Capture external input BEFORE we overwrite the buffer ──
+        // When real audio is routed in (e.g. Reaper), the buffer has
+        // genuine input. When nothing is routed (e.g. Ableton instrument
+        // track), the buffer has garbage or our previous output.
+        //
+        // Either way: sanitize aggressively. Clamp to [-2, 2], kill
+        // NaN/inf/denormal. If the input is garbage, it gets clamped
+        // to near-zero and ext_mix just attenuates the exciter (harmless).
+        if ext_mix > 0.001 && total > 0 {
+            let channels = buffer.as_slice();
+            if !channels.is_empty() {
+                // Feedback detection: if first sample matches previous output,
+                // the host recycled our buffer. Skip capture entirely.
+                let first = channels[0][0];
+                let is_feedback = first == self.prev_out_sample
+                    && self.prev_out_sample != 0.0;
+
+                if !is_feedback {
+                    for i in 0..total {
+                        let mut sum = 0.0f32;
+                        for ch in channels.iter() {
+                            let s = ch[i];
+                            // Kill NaN, inf, denormals, and clamp to audio range
+                            if s.is_finite() {
+                                sum += s.clamp(-2.0, 2.0);
+                            }
+                        }
+                        ext_buf[i] = sum / channels.len().max(1) as f32;
+                    }
                 }
-                let mut sum = 0.0f32;
-                let mut ch_count = 0;
-                for ch in frame.iter_mut() {
-                    sum += *ch;
-                    ch_count += 1;
-                }
-                ext_buf[i] = if ch_count > 0 {
-                    sum / ch_count as f32
-                } else {
-                    0.0
-                };
             }
         }
 
-        // Process Moth voice into a temporary mono buffer.
+        // ── Process Moth voice ──
         let mut mono_buf = [0.0f32; 4096];
+        let mut voice_corrupted = false;
 
-        // Process in MAX_BLOCK (256) chunks
         let mut offset = 0;
         while offset < total {
             let chunk = (total - offset).min(256);
@@ -469,9 +490,33 @@ impl Plugin for MothPlugin {
                 &mut mono_buf[offset..offset + chunk],
             );
             offset += chunk;
+
+            // Check for NaN/inf BEFORE flushing (so the guard can detect it)
+            for s in mono_buf[offset - chunk..offset].iter() {
+                if !s.is_finite() {
+                    voice_corrupted = true;
+                    break;
+                }
+            }
+
+            // Flush denormals and NaN from output
+            for s in mono_buf[offset - chunk..offset].iter_mut() {
+                if !s.is_finite() || s.abs() < 1.0e-15 {
+                    *s = 0.0;
+                }
+            }
         }
 
-        // Write mono output to all channels (stereo: same signal both sides)
+        // Nuclear guard: if voice produced NaN, reset it so it recovers
+        if voice_corrupted {
+            voice.reset();
+            for s in mono_buf[..total].iter_mut() { *s = 0.0; }
+        }
+
+        // ── Write output + store fingerprint for next call ──
+        let first_out = if total > 0 { mono_buf[0] * master_gain } else { 0.0 };
+        self.prev_out_sample = first_out;
+
         for (i, mut frame) in buffer.iter_samples().enumerate() {
             let sample = if i < total {
                 mono_buf[i] * master_gain

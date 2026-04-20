@@ -999,7 +999,6 @@ pub(crate) fn create(
                 VStack::new(cx, |cx| {
                     Label::new(cx, "OUT").class("section-header");
                     param_row(cx, "Master", |p| &p.master_gain);
-                    param_row_c(cx, "Ext Mix", "purple", |p| &p.ext_mix);
                 }).class("section-narrow");
             }).class("signal-chain");
 
