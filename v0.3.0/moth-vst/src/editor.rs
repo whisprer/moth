@@ -146,7 +146,7 @@ struct ExciterVis {
     params: Arc<MothParams>,
 }
 impl ExciterVis {
-    pub fn new(cx: &mut Context, params: Arc<MothParams>) -> Handle<Self> {
+    pub fn new(cx: &mut Context, params: Arc<MothParams>) -> Handle<'_, Self> {
         Self { params }.build(cx, |_| {})
     }
 }
@@ -309,7 +309,7 @@ struct VibratorVis {
     params: Arc<MothParams>,
 }
 impl VibratorVis {
-    pub fn new(cx: &mut Context, params: Arc<MothParams>) -> Handle<Self> {
+    pub fn new(cx: &mut Context, params: Arc<MothParams>) -> Handle<'_, Self> {
         Self { params }.build(cx, |_| {})
     }
 }
@@ -440,7 +440,7 @@ struct BodyVis {
     params: Arc<MothParams>,
 }
 impl BodyVis {
-    pub fn new(cx: &mut Context, params: Arc<MothParams>) -> Handle<Self> {
+    pub fn new(cx: &mut Context, params: Arc<MothParams>) -> Handle<'_, Self> {
         Self { params }.build(cx, |_| {})
     }
 }
@@ -629,7 +629,7 @@ struct NonlinVis {
     params: Arc<MothParams>,
 }
 impl NonlinVis {
-    pub fn new(cx: &mut Context, params: Arc<MothParams>) -> Handle<Self> {
+    pub fn new(cx: &mut Context, params: Arc<MothParams>) -> Handle<'_, Self> {
         Self { params }.build(cx, |_| {})
     }
 }
@@ -832,7 +832,7 @@ struct SpatialVis {
     params: Arc<MothParams>,
 }
 impl SpatialVis {
-    pub fn new(cx: &mut Context, params: Arc<MothParams>) -> Handle<Self> {
+    pub fn new(cx: &mut Context, params: Arc<MothParams>) -> Handle<'_, Self> {
         Self { params }.build(cx, |_| {})
     }
 }

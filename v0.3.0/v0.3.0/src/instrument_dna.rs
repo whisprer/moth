@@ -85,7 +85,7 @@ impl DnaRng {
     ///
     /// Useful for parameters that need integer entropy (e.g. wavetable offsets,
     /// bit patterns for noise shaping).
-    fn next_raw(&mut self) -> u32 {
+    fn _next_raw(&mut self) -> u32 {
         self.state = self
             .state
             .wrapping_mul(1_664_525)

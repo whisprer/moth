@@ -136,7 +136,7 @@ impl PressureState {
 /// assert!(buffer.iter().any(|&s| s.abs() > 0.01));
 /// ```
 pub struct ExciterProcessor {
-    sample_rate: f32,
+    _sample_rate: f32,
     dna: ExciterDna,
 
     // ── Gate detection ──
@@ -174,7 +174,7 @@ impl ExciterProcessor {
             ^ (dna.signature * 2_147_483_648.0) as u32;
 
         Self {
-            sample_rate,
+            _sample_rate: sample_rate,
             dna: *dna,
             prev_gate: false,
             direct: DirectState::new(),

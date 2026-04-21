@@ -233,7 +233,10 @@ impl Default for MothParams {
             ext_mix: FloatParam::new(
                 "Ext Mix",
                 0.0,
-                FloatRange::Linear { min: 0.0, max: 0.99 },
+                FloatRange::Linear {
+                    min: 0.0,
+                    max: 0.99,
+                },
             )
             .with_unit(" mix")
             .with_value_to_string(formatters::v2s_f32_rounded(2)),
@@ -451,8 +454,7 @@ impl Plugin for MothPlugin {
                 // Feedback detection: if first sample matches previous output,
                 // the host recycled our buffer. Skip capture entirely.
                 let first = channels[0][0];
-                let is_feedback = first == self.prev_out_sample
-                    && self.prev_out_sample != 0.0;
+                let is_feedback = first == self.prev_out_sample && self.prev_out_sample != 0.0;
 
                 if !is_feedback {
                     for i in 0..total {
@@ -510,11 +512,17 @@ impl Plugin for MothPlugin {
         // Nuclear guard: if voice produced NaN, reset it so it recovers
         if voice_corrupted {
             voice.reset();
-            for s in mono_buf[..total].iter_mut() { *s = 0.0; }
+            for s in mono_buf[..total].iter_mut() {
+                *s = 0.0;
+            }
         }
 
         // ── Write output + store fingerprint for next call ──
-        let first_out = if total > 0 { mono_buf[0] * master_gain } else { 0.0 };
+        let first_out = if total > 0 {
+            mono_buf[0] * master_gain
+        } else {
+            0.0
+        };
         self.prev_out_sample = first_out;
 
         for (i, mut frame) in buffer.iter_samples().enumerate() {
