@@ -1,0 +1,3 @@
+[workspace]
+resolver = "2"
+members = ["v0.4.0", "moth-vst", "xtask"]

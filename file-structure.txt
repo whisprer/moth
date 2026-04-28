@@ -1,0 +1,106 @@
+Folder PATH listing for volume X:/
+Volume serial number is 0000-000X
+D:.
+|   .gitattributes
+|   .gitignore
+|   CHANGELOG.md
+|   CODE_OF_CONDUCT.md
+|   CONTRIBUTING.md
+|   detailed_technical.md
+|   file-structure.txt
+|   LICENSE.md
+|   moth-vst.clap
+|   MOTH_ARCHITECTURE.md
+|   README.md
+|   SECURITY.md
+|   
++---distro
+|       moth-vst.clap
+|       moth-vst.ogclap
+|       moth-vst.ogvst3
+|       moth-vst.vst3
+|       Moth_Changelog.pdf
+|       Moth_Factory_Presets_v0.2.0.pdf
+|       Moth_Installation_Guide_v0.2.0.pdf
+|       Moth_Intro_Card.pdf
+|       Moth_MIDI_Implementation_Chart_v0.2.0.pdf
+|       Moth_User_Manual_v0.2.0.pdf
+|       
++---docs
+|       chatter-convo-perpl-claude.txt
+|       convo-claude-opus-46.txt
+|       convo-perpl-claude.txt
+|       files.zip
+|       handover-perpl-claude.txt
+|       moth-claude-opus-46-2.txt
+|       moth-convo-perpl-claude.txt
+|       moth-intro-card.txt
+|       Moth_Changelog.docx
+|       Moth_Factory_Presets_v0.2.0.docx
+|       Moth_Installation_Guide_v0.2.0.docx
+|       Moth_Intro_Card.pdf
+|       Moth_MIDI_Implementation_Chart_v0.2.0.pdf
+|       Moth_User_Manual_v0.2.0.pdf
+|       temp_scartch.txt
+|       
++---v0.1.0
++---v0.2.0
++---v0.3.0
+|       v0.3.0.tar.gz
+|
+\---v0.4.0
+    |   Cargo.toml
+    |   files.zip
+    |   file_system.md
+    |   in-flight-warnings.txt
+    |   README.md
+    |   
+    +---assets
+    |       faceplate.og
+    |       faceplate.png
+    |       Gemini_temp1.png
+    |       Gemini_temp2.png
+    |       Gemini_temp3.png
+    |       Gemini_temp4.png
+    |       Gemini_temp5.png
+    |       knob_large.png
+    |       knob_small.png
+    |       led_amber.png
+    |       led_off.png
+    |       screw.png
+    |       shdy-hilly-moth.png
+    |       toggle_down.png
+    |       toggle_up.png
+    |       tube_grid.png
+    |       
+    +---moth-vst
+    |   |   Cargo.toml
+    |   |   README.md
+    |   |   
+    |   \---src
+    |           editor.rs
+    |           lib.rs
+    |           
+    +---v0.4.0
+    |   |   Cargo.toml
+    |   |   
+    |   \---src
+    |           dsp_core.rs
+    |           exciter.rs
+    |           exciter_dsp.rs
+    |           gesture.rs
+    |           instrument_dna.rs
+    |           lib.rs
+    |           midi1.rs
+    |           nonlin.rs
+    |           resonator.rs
+    |           spatial.rs
+    |           vibrator.rs
+    |           voice.rs
+    |           
+    \---xtask
+        |   Cargo.toml
+        |   
+        \---src
+                main.rs
+                
