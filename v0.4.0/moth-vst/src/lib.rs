@@ -1,7 +1,9 @@
 use nih_plug::prelude::*;
 use nih_plug_vizia::ViziaState;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+
+mod editor;
 
 use moth::exciter::ExciterModel;
 use moth::gesture::PlayGesture;
@@ -11,30 +13,48 @@ use moth::resonator::BodyShape;
 use moth::spatial::SpatialCharacter;
 use moth::voice::MothVoice;
 
-mod editor;
+// ─── Shared audio→GUI state ─────────────────────────────────────────────────
+//
+// Anything the audio thread writes for the GUI to read goes here.
+// Lock-free atomic access from both sides.
+
+pub(crate) struct AudioMeters {
+    /// Smoothed peak amplitude (linear) — VU ballistics applied in audio thread.
+    /// Stored as f32 bits.
+    pub peak_level: AtomicU32,
+}
+
+impl Default for AudioMeters {
+    fn default() -> Self {
+        Self { peak_level: AtomicU32::new(0) }
+    }
+}
 
 // ─── Plugin ─────────────────────────────────────────────────────────────────
 
 struct MothPlugin {
     params: Arc<MothParams>,
+    /// Audio→GUI shared state (peak meter, etc).
+    meters: Arc<AudioMeters>,
     voice: Option<MothVoice>,
     /// Current MIDI note (if any).
     current_note: Option<u8>,
     /// Current gesture state.
     gesture: PlayGesture,
-    /// Fingerprint of our previous output — detects feedback when the host
-    /// feeds our own output back as input (no external routing configured).
-    prev_out_sample: f32,
+    /// DNA seed — in a real hardware unit this comes from the MCU UID.
+    /// For the plugin, use a fixed seed or let the user set one.
+    dna_seed: u32,
 }
 
 impl Default for MothPlugin {
     fn default() -> Self {
         Self {
             params: Arc::new(MothParams::default()),
+            meters: Arc::new(AudioMeters::default()),
             voice: None,
             current_note: None,
             gesture: PlayGesture::SILENT,
-            prev_out_sample: 0.0,
+            dna_seed: 0x6D6F_7468, // "moth" — the default seed IS Moth himself
         }
     }
 }
@@ -43,17 +63,12 @@ impl Default for MothPlugin {
 
 #[derive(Params)]
 struct MothParams {
-    /// Persisted editor window state (size, position).
+    /// GUI state (size, position) — persisted with the project.
     #[persist = "editor-state"]
     editor_state: Arc<ViziaState>,
 
-    /// Persisted DNA seed — unique per plugin instance.
-    /// 0 = not yet born (will be seeded on first init).
-    /// Once seeded, the DAW persists this with the project forever.
-    #[persist = "dna-seed"]
-    dna_seed: Arc<AtomicU32>,
-
     // ── Exciter ──
+
     #[id = "exciter_morph"]
     exciter_morph: FloatParam,
 
@@ -64,6 +79,7 @@ struct MothParams {
     stochasticity: FloatParam,
 
     // ── Vibrator ──
+
     #[id = "vib_damping"]
     vib_damping: FloatParam,
 
@@ -77,6 +93,7 @@ struct MothParams {
     position: FloatParam,
 
     // ── Body ──
+
     #[id = "body_geometry"]
     body_geometry: FloatParam,
 
@@ -90,6 +107,7 @@ struct MothParams {
     body_size: FloatParam,
 
     // ── Non-lin ──
+
     #[id = "nl_drive"]
     nl_drive: FloatParam,
 
@@ -106,6 +124,7 @@ struct MothParams {
     nl_tone: FloatParam,
 
     // ── Spatial ──
+
     #[id = "room_size"]
     room_size: FloatParam,
 
@@ -113,6 +132,7 @@ struct MothParams {
     room_mix: FloatParam,
 
     // ── Mixer ──
+
     #[id = "exciter_bleed"]
     exciter_bleed: FloatParam,
 
@@ -120,19 +140,15 @@ struct MothParams {
     body_mix: FloatParam,
 
     // ── Master ──
+
     #[id = "master_gain"]
     master_gain: FloatParam,
-
-    // ── External input ──
-    #[id = "ext_mix"]
-    ext_mix: FloatParam,
 }
 
 impl Default for MothParams {
     fn default() -> Self {
         Self {
             editor_state: editor::default_state(),
-            dna_seed: Arc::new(AtomicU32::new(0)), // 0 = not yet born
 
             // ── Exciter ──
             exciter_morph: FloatParam::new(
@@ -143,7 +159,11 @@ impl Default for MothParams {
             .with_unit(" morph")
             .with_value_to_string(formatters::v2s_f32_rounded(2)),
 
-            spectral_tilt: FloatParam::new("Tilt", 0.3, FloatRange::Linear { min: 0.0, max: 1.0 }),
+            spectral_tilt: FloatParam::new(
+                "Tilt",
+                0.3,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            ),
 
             stochasticity: FloatParam::new(
                 "Stochastic",
@@ -152,7 +172,11 @@ impl Default for MothParams {
             ),
 
             // ── Vibrator ──
-            vib_damping: FloatParam::new("Damping", 0.7, FloatRange::Linear { min: 0.0, max: 1.0 }),
+            vib_damping: FloatParam::new(
+                "Damping",
+                0.7,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            ),
 
             vib_brightness: FloatParam::new(
                 "Brightness",
@@ -166,7 +190,11 @@ impl Default for MothParams {
                 FloatRange::Linear { min: 0.0, max: 1.0 },
             ),
 
-            position: FloatParam::new("Position", 0.3, FloatRange::Linear { min: 0.0, max: 1.0 }),
+            position: FloatParam::new(
+                "Position",
+                0.3,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            ),
 
             // ── Body ──
             body_geometry: FloatParam::new(
@@ -187,23 +215,55 @@ impl Default for MothParams {
                 FloatRange::Linear { min: 0.0, max: 1.0 },
             ),
 
-            body_size: FloatParam::new("Body Size", 0.4, FloatRange::Linear { min: 0.0, max: 1.0 }),
+            body_size: FloatParam::new(
+                "Body Size",
+                0.4,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            ),
 
             // ── Non-lin ──
-            nl_drive: FloatParam::new("Drive", 1.5, FloatRange::Linear { min: 0.5, max: 4.0 }),
+            nl_drive: FloatParam::new(
+                "Drive",
+                1.5,
+                FloatRange::Linear { min: 0.5, max: 4.0 },
+            ),
 
-            nl_tape: FloatParam::new("Tape", 0.55, FloatRange::Linear { min: 0.0, max: 1.0 }),
+            nl_tape: FloatParam::new(
+                "Tape",
+                0.55,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            ),
 
-            nl_tube: FloatParam::new("Tube", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }),
+            nl_tube: FloatParam::new(
+                "Tube",
+                0.0,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            ),
 
-            nl_warmth: FloatParam::new("Warmth", 0.4, FloatRange::Linear { min: 0.0, max: 1.0 }),
+            nl_warmth: FloatParam::new(
+                "Warmth",
+                0.4,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            ),
 
-            nl_tone: FloatParam::new("Tone", 0.45, FloatRange::Linear { min: 0.0, max: 1.0 }),
+            nl_tone: FloatParam::new(
+                "Tone",
+                0.45,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            ),
 
             // ── Spatial ──
-            room_size: FloatParam::new("Room", 0.3, FloatRange::Linear { min: 0.0, max: 1.0 }),
+            room_size: FloatParam::new(
+                "Room",
+                0.3,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            ),
 
-            room_mix: FloatParam::new("Reverb Mix", 0.2, FloatRange::Linear { min: 0.0, max: 1.0 }),
+            room_mix: FloatParam::new(
+                "Reverb Mix",
+                0.2,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            ),
 
             // ── Mixer ──
             exciter_bleed: FloatParam::new(
@@ -212,7 +272,11 @@ impl Default for MothParams {
                 FloatRange::Linear { min: 0.0, max: 0.5 },
             ),
 
-            body_mix: FloatParam::new("Body Mix", 0.85, FloatRange::Linear { min: 0.0, max: 1.0 }),
+            body_mix: FloatParam::new(
+                "Body Mix",
+                0.85,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            ),
 
             // ── Master ──
             master_gain: FloatParam::new(
@@ -228,18 +292,6 @@ impl Default for MothParams {
             .with_unit(" dB")
             .with_value_to_string(formatters::v2s_f32_gain_to_db(2))
             .with_string_to_value(formatters::s2v_f32_gain_to_db()),
-
-            // ── External input ──
-            ext_mix: FloatParam::new(
-                "Ext Mix",
-                0.0,
-                FloatRange::Linear {
-                    min: 0.0,
-                    max: 0.99,
-                },
-            )
-            .with_unit(" mix")
-            .with_value_to_string(formatters::v2s_f32_rounded(2)),
         }
     }
 }
@@ -283,11 +335,13 @@ impl Plugin for MothPlugin {
     const EMAIL: &'static str = "";
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
-    const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[AudioIOLayout {
-        main_input_channels: NonZeroU32::new(2), // external audio input
-        main_output_channels: NonZeroU32::new(2), // stereo output
-        ..AudioIOLayout::const_default()
-    }];
+    const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[
+        AudioIOLayout {
+            main_input_channels: None, // synth, no audio input
+            main_output_channels: NonZeroU32::new(2), // stereo output
+            ..AudioIOLayout::const_default()
+        },
+    ];
 
     const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
 
@@ -299,7 +353,11 @@ impl Plugin for MothPlugin {
     }
 
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
-        editor::create(self.params.clone(), self.params.editor_state.clone())
+        editor::create(
+            self.params.clone(),
+            self.meters.clone(),
+            self.params.editor_state.clone(),
+        )
     }
 
     fn initialize(
@@ -309,39 +367,7 @@ impl Plugin for MothPlugin {
         _context: &mut impl InitContext<Self>,
     ) -> bool {
         let sample_rate = buffer_config.sample_rate;
-
-        // ── DNA seed: birth of a unique Moth ──
-        // First time this instance loads: generate a seed from entropy.
-        // The DAW persists it with the project — same seed every reload.
-        // On hardware, this would come from the MCU unique device ID.
-        let mut seed = self.params.dna_seed.load(Ordering::Relaxed);
-        if seed == 0 {
-            // Not yet born — generate from system entropy.
-            // Mix timestamp, process ID, and a pointer for uniqueness.
-            let time_bits = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos() as u32;
-            let ptr_bits = (&*self as *const _ as usize) as u32;
-            let pid_bits = std::process::id();
-
-            // Combine entropy sources with xorshift mixing
-            seed = time_bits;
-            seed ^= pid_bits.wrapping_mul(2654435761); // Knuth multiplicative hash
-            seed ^= ptr_bits.wrapping_mul(2246822519);
-            seed ^= seed >> 16;
-            seed = seed.wrapping_mul(0x45D9F3B);
-            seed ^= seed >> 16;
-
-            // Ensure nonzero (0 is our sentinel for "unborn")
-            if seed == 0 {
-                seed = 0x6D6F_7468;
-            }
-
-            self.params.dna_seed.store(seed, Ordering::Relaxed);
-        }
-
-        let dna = InstrumentDna::from_seed(seed, sample_rate);
+        let dna = InstrumentDna::from_seed(self.dna_seed, sample_rate);
         self.voice = Some(MothVoice::new(&dna, sample_rate));
         true
     }
@@ -435,106 +461,49 @@ impl Plugin for MothPlugin {
         // ── Process audio in chunks ──
         let num_samples = buffer.samples();
         let master_gain = self.params.master_gain.value();
-        let ext_mix = self.params.ext_mix.value();
 
-        let mut ext_buf = [0.0f32; 4096];
+        // Process Moth voice into a temporary mono buffer.
+        // Stack-allocate 4096 samples — covers all reasonable host block sizes.
+        let mut mono_buf = [0.0f32; 4096];
         let total = num_samples.min(4096);
 
-        // ── Capture external input BEFORE we overwrite the buffer ──
-        // When real audio is routed in (e.g. Reaper), the buffer has
-        // genuine input. When nothing is routed (e.g. Ableton instrument
-        // track), the buffer has garbage or our previous output.
-        //
-        // Either way: sanitize aggressively. Clamp to [-2, 2], kill
-        // NaN/inf/denormal. If the input is garbage, it gets clamped
-        // to near-zero and ext_mix just attenuates the exciter (harmless).
-        if ext_mix > 0.001 && total > 0 {
-            let channels = buffer.as_slice();
-            if !channels.is_empty() {
-                // Feedback detection: if first sample matches previous output,
-                // the host recycled our buffer. Skip capture entirely.
-                let first = channels[0][0];
-                let is_feedback = first == self.prev_out_sample && self.prev_out_sample != 0.0;
-
-                if !is_feedback {
-                    for i in 0..total {
-                        let mut sum = 0.0f32;
-                        for ch in channels.iter() {
-                            let s = ch[i];
-                            // Kill NaN, inf, denormals, and clamp to audio range
-                            if s.is_finite() {
-                                sum += s.clamp(-2.0, 2.0);
-                            }
-                        }
-                        ext_buf[i] = sum / channels.len().max(1) as f32;
-                    }
-                }
-            }
-        }
-
-        // ── Process Moth voice ──
-        let mut mono_buf = [0.0f32; 4096];
-        let mut voice_corrupted = false;
-
+        // Process in MAX_BLOCK (256) chunks
         let mut offset = 0;
         while offset < total {
             let chunk = (total - offset).min(256);
-            let ext_slice = if ext_mix > 0.001 {
-                Some(&ext_buf[offset..offset + chunk] as &[f32])
-            } else {
-                None
-            };
-            voice.process_with_external(
+            voice.process(
                 &exciter_model,
                 &self.gesture,
-                ext_slice,
-                ext_mix,
                 &mut mono_buf[offset..offset + chunk],
             );
             offset += chunk;
-
-            // Check for NaN/inf BEFORE flushing (so the guard can detect it)
-            for s in mono_buf[offset - chunk..offset].iter() {
-                if !s.is_finite() {
-                    voice_corrupted = true;
-                    break;
-                }
-            }
-
-            // Flush denormals and NaN from output
-            for s in mono_buf[offset - chunk..offset].iter_mut() {
-                if !s.is_finite() || s.abs() < 1.0e-15 {
-                    *s = 0.0;
-                }
-            }
         }
 
-        // Nuclear guard: if voice produced NaN, reset it so it recovers
-        if voice_corrupted {
-            voice.reset();
-            for s in mono_buf[..total].iter_mut() {
-                *s = 0.0;
-            }
-        }
-
-        // ── Write output + store fingerprint for next call ──
-        let first_out = if total > 0 {
-            mono_buf[0] * master_gain
-        } else {
-            0.0
-        };
-        self.prev_out_sample = first_out;
-
+        // Write mono output to all channels (stereo: same signal both sides)
+        // and detect peak amplitude for the VU meter.
+        let mut block_peak = 0.0f32;
         for (i, mut frame) in buffer.iter_samples().enumerate() {
             let sample = if i < total {
                 mono_buf[i] * master_gain
             } else {
                 0.0
             };
+            let abs = sample.abs();
+            if abs > block_peak { block_peak = abs; }
             for channel_sample in frame.iter_mut() {
                 *channel_sample = sample;
             }
         }
+
+        // VU ballistics — real VU meters have ~300ms integration time.
+        // Read previous value, smooth toward block_peak, write back.
+        let prev_bits = self.meters.peak_level.load(Ordering::Relaxed);
+        let prev = f32::from_bits(prev_bits);
+        let alpha_attack = 0.05_f32;   // fast rise
+        let alpha_release = 0.015_f32; // slow fall
+        let alpha = if block_peak > prev { alpha_attack } else { alpha_release };
+        let smoothed = prev + (block_peak - prev) * alpha;
+        self.meters.peak_level.store(smoothed.to_bits(), Ordering::Relaxed);
 
         ProcessStatus::Normal
     }
@@ -555,8 +524,10 @@ impl ClapPlugin for MothPlugin {
 
 impl Vst3Plugin for MothPlugin {
     const VST3_CLASS_ID: [u8; 16] = *b"RYOMothSynthV001";
-    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] =
-        &[Vst3SubCategory::Instrument, Vst3SubCategory::Synth];
+    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[
+        Vst3SubCategory::Instrument,
+        Vst3SubCategory::Synth,
+    ];
 }
 
 nih_export_clap!(MothPlugin);

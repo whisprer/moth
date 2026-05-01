@@ -10,6 +10,7 @@ use nih_plug_vizia::vizia::vg;
 use nih_plug_vizia::widgets::*;
 use nih_plug_vizia::{create_vizia_editor, ViziaState, ViziaTheming};
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use crate::MothParams;
 
 // ─── Embedded faceplate ─────────────────────────────────────────────────────
@@ -595,21 +596,253 @@ impl View for NonlinDisplay {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  VU NEEDLE — analog meter overlay
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Pivot point in faceplate-pixel space — bottom-centre of cream face
+const VU_PIVOT_X: f32 = 1180.0;
+const VU_PIVOT_Y: f32 = 470.0;
+const VU_NEEDLE_R: f32 = 110.0;
+
+const VU_BOX_X: i32 = 1050;
+const VU_BOX_Y: i32 = 290;
+const VU_BOX_W: i32 = 240;
+const VU_BOX_H: i32 = 240;
+
+struct VuNeedle { meters: Arc<crate::AudioMeters> }
+impl VuNeedle {
+    pub fn new(cx: &mut Context, meters: Arc<crate::AudioMeters>) -> Handle<'_, Self> {
+        Self { meters }.build(cx, |_| {})
+    }
+}
+impl View for VuNeedle {
+    fn element(&self) -> Option<&'static str> { Some("vu-needle") }
+
+    fn draw(&self, cx: &mut DrawContext, canvas: &mut Canvas) {
+        let b = cx.bounds();
+
+        let pivot_x = b.x + (VU_PIVOT_X - VU_BOX_X as f32);
+        let pivot_y = b.y + (VU_PIVOT_Y - VU_BOX_Y as f32);
+
+        // Read smoothed peak from the audio thread (atomic, lock-free)
+        let peak_bits = self.meters.peak_level.load(Ordering::Relaxed);
+        let peak = f32::from_bits(peak_bits).max(1.0e-10);
+        let peak_db = 20.0 * peak.log10();
+
+        // Map [-36, +6] dB to [-1.0, +1.0]
+        // Map dB to needle position.
+        // Moth's peak output is typically around -10 to -6 dB at loudest.
+        // Scale range tuned so that:
+        //   -40 dB = idle (hard left)
+        //   -20 dB = mid-left (quiet sustain)
+        //   -10 dB = needle near 0 mark
+        //    -3 dB = pegged right (red zone)
+        let normalized = ((peak_db + 40.0) / 37.0).clamp(0.0, 1.0);
+        let angle_deg = -50.0 + normalized * 100.0;
+        let angle_rad = angle_deg * std::f32::consts::PI / 180.0;
+
+        let tip_x = pivot_x + angle_rad.sin() * VU_NEEDLE_R;
+        let tip_y = pivot_y - angle_rad.cos() * VU_NEEDLE_R;
+
+        let mut needle = vg::Path::new();
+        needle.move_to(pivot_x, pivot_y);
+        needle.line_to(tip_x, tip_y);
+        let mut needle_paint = vg::Paint::color(vg::Color::rgbaf(0.10, 0.08, 0.06, 0.95));
+        needle_paint.set_line_width(1.6);
+        canvas.stroke_path(&needle, &needle_paint);
+
+        let mut cap = vg::Path::new();
+        cap.circle(pivot_x, pivot_y, 5.0);
+        canvas.fill_path(&cap, &vg::Paint::color(vg::Color::rgbf(0.18, 0.14, 0.10)));
+        let mut cap_hi = vg::Path::new();
+        cap_hi.circle(pivot_x - 1.2, pivot_y - 1.2, 1.8);
+        canvas.fill_path(&cap_hi, &vg::Paint::color(vg::Color::rgbf(0.55, 0.45, 0.28)));
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  COUPLING MODE LEDS — three amber dots showing active exciter modes
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Three small LED dots that brighten when each coupling mode is active:
+//   D — direct coupling (pluck/strike/ebow)
+//   F — friction coupling (bow)
+//   P — pressure coupling (breath)
+// Their amber glow intensity reflects the current morph position.
+
+const LED_BOX_X: i32 = 130;
+const LED_BOX_Y: i32 = 730;
+const LED_BOX_W: i32 = 80;
+const LED_BOX_H: i32 = 16;
+
+struct CouplingLeds { params: Arc<MothParams> }
+impl CouplingLeds {
+    pub fn new(cx: &mut Context, params: Arc<MothParams>) -> Handle<'_, Self> {
+        Self { params }.build(cx, |_| {})
+    }
+}
+impl View for CouplingLeds {
+    fn element(&self) -> Option<&'static str> { Some("coupling-leds") }
+    fn draw(&self, cx: &mut DrawContext, canvas: &mut Canvas) {
+        let b = cx.bounds();
+        let (x, y, w, h) = (b.x, b.y, b.w, b.h);
+
+        // Read morph and derive coupling weights (same logic as ExciterDisplay)
+        let morph = self.params.exciter_morph.value();
+        let direct = [1.0_f32, 1.0, 0.0, 0.0, 1.0, 1.0];
+        let friction = [0.0_f32, 0.0, 1.0, 0.0, 0.0, 0.0];
+        let pressure = [0.0_f32, 0.0, 0.0, 1.0, 0.0, 0.0];
+        let sc = morph * 5.0;
+        let idx = (sc as usize).min(4);
+        let frac = sc - idx as f32;
+        let lerp = |a: f32, b: f32| a + (b - a) * frac;
+        let fd = lerp(direct[idx], direct[idx + 1]);
+        let ff = lerp(friction[idx], friction[idx + 1]);
+        let fp = lerp(pressure[idx], pressure[idx + 1]);
+
+        let cy = y + h * 0.5;
+        let radius = 4.0;
+        let spacing = w / 4.0;
+
+        // Three LEDs: D F P
+        for (i, &strength) in [fd, ff, fp].iter().enumerate() {
+            let cx2 = x + spacing * (i as f32 + 1.0);
+
+            // Off LED: dim base colour
+            let mut led = vg::Path::new();
+            led.circle(cx2, cy, radius);
+            canvas.fill_path(&led, &vg::Paint::color(vg::Color::rgbf(0.18, 0.14, 0.08)));
+
+            // Glow when active
+            if strength > 0.01 {
+                // Outer glow
+                let mut glow = vg::Path::new();
+                glow.circle(cx2, cy, radius + 3.0);
+                canvas.fill_path(&glow, &vg::Paint::color(
+                    vg::Color::rgbaf(0.910, 0.753, 0.416, strength * 0.4)
+                ));
+                // Bright core
+                let mut core = vg::Path::new();
+                core.circle(cx2, cy, radius * 0.85);
+                canvas.fill_path(&core, &vg::Paint::color(
+                    vg::Color::rgbaf(0.910, 0.753, 0.416, 0.6 + strength * 0.4)
+                ));
+                // Hot spot
+                let mut hot = vg::Path::new();
+                hot.circle(cx2 - 1.0, cy - 1.0, radius * 0.35);
+                canvas.fill_path(&hot, &vg::Paint::color(
+                    vg::Color::rgbaf(1.0, 0.92, 0.65, strength * 0.8)
+                ));
+            }
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  KNOB INDICATORS — rotating pointer line on painted knobs
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The faceplate has 4 painted knobs (Morph, Tilt, Size, Drive). They're
+// static images; we draw a thin cream/brass indicator line on top that
+// rotates with the parameter value. Range: -135° (left, value=0) to
+// +135° (right, value=1), 270° total sweep — standard chicken-head range.
+
+struct KnobIndicator {
+    params: Arc<MothParams>,
+    which: KnobParam,
+    radius: f32,
+}
+
+#[derive(Clone, Copy)]
+enum KnobParam { Morph, Tilt, Size, Drive }
+
+impl KnobIndicator {
+    pub fn new(cx: &mut Context, params: Arc<MothParams>, which: KnobParam, radius: f32)
+        -> Handle<'_, Self>
+    {
+        Self { params, which, radius }.build(cx, |_| {})
+    }
+}
+impl View for KnobIndicator {
+    fn element(&self) -> Option<&'static str> { Some("knob-indicator") }
+    fn draw(&self, cx: &mut DrawContext, canvas: &mut Canvas) {
+        let b = cx.bounds();
+        let cx_pos = b.x + b.w * 0.5;
+        let cy_pos = b.y + b.h * 0.5;
+
+        // Read normalized parameter value (0..1)
+        let val = match self.which {
+            KnobParam::Morph => self.params.exciter_morph.value(),
+            KnobParam::Tilt  => self.params.spectral_tilt.value(),
+            KnobParam::Size  => self.params.body_size.value(),
+            KnobParam::Drive => {
+                // nl_drive is 0.5..4.0, normalize to 0..1
+                let v = self.params.nl_drive.value();
+                ((v - 0.5) / 3.5).clamp(0.0, 1.0)
+            }
+        };
+
+        // 270° sweep, starting at -135° (7 o'clock)
+        let angle_deg = -135.0 + val * 270.0;
+        let angle_rad = angle_deg * std::f32::consts::PI / 180.0;
+
+        // Indicator line from inner edge to outer edge of knob
+        let inner = self.radius * 0.30;
+        let outer = self.radius * 0.85;
+        let sin = angle_rad.sin();
+        let cos = -angle_rad.cos();  // negative because Y increases downward
+
+        let x0 = cx_pos + sin * inner;
+        let y0 = cy_pos + cos * inner;
+        let x1 = cx_pos + sin * outer;
+        let y1 = cy_pos + cos * outer;
+
+        let mut line = vg::Path::new();
+        line.move_to(x0, y0);
+        line.line_to(x1, y1);
+        let mut paint = vg::Paint::color(vg::Color::rgbf(0.910, 0.863, 0.784));
+        paint.set_line_width(2.0);
+        paint.set_line_cap(vg::LineCap::Round);
+        canvas.stroke_path(&line, &paint);
+    }
+}
+
 // ─── Editor creation ────────────────────────────────────────────────────────
 
 pub(crate) fn create(
     params: Arc<MothParams>,
+    meters: Arc<crate::AudioMeters>,
     editor_state: Arc<ViziaState>,
 ) -> Option<Box<dyn Editor>> {
     create_vizia_editor(editor_state, ViziaTheming::Custom, move |cx, _| {
         cx.add_stylesheet(STYLE).expect("moth: stylesheet");
         Data { params: params.clone() }.build(cx);
 
+        // Periodic redraw timer — keeps the VU needle live since it reads
+        // from an atomic that vizia can't observe. 30 fps is plenty for VU.
+        let timer = cx.add_timer(
+            std::time::Duration::from_millis(33),
+            None,
+            |cx, action| {
+                if matches!(action, TimerAction::Tick(_)) {
+                    cx.needs_redraw();
+                }
+            },
+        );
+        cx.start_timer(timer);
+
         // Pre-clone for the display Views (each takes ownership of its own Arc)
         let p_exc = params.clone();
         let p_vib = params.clone();
         let p_bod = params.clone();
         let p_nl  = params.clone();
+        let m_vu  = meters.clone();
+        let p_led = params.clone();
+        let p_kn1 = params.clone();
+        let p_kn2 = params.clone();
+        let p_kn3 = params.clone();
+        let p_kn4 = params.clone();
 
         // Root: stack the faceplate background, then absolutely-positioned sliders on top
         ZStack::new(cx, move |cx| {
@@ -622,13 +855,33 @@ pub(crate) fn create(
             place_view(cx, 417, 151, 107, 109, move |cx| { BodyDisplay::new(cx, p_bod.clone()); });
             place_view(cx, 741, 149, 120,  91, move |cx| { NonlinDisplay::new(cx, p_nl.clone()); });
 
+            // Layer 2b: VU meter needle overlay on the OUT meter.
+            place_view(cx, VU_BOX_X, VU_BOX_Y, VU_BOX_W, VU_BOX_H, move |cx| { VuNeedle::new(cx, m_vu.clone()); });
+
+            // Layer 2c: Coupling mode LEDs (D F P) under the EXCITER column.
+            place_view(cx, LED_BOX_X, LED_BOX_Y, LED_BOX_W, LED_BOX_H, move |cx| { CouplingLeds::new(cx, p_led.clone()); });
+
+            // Layer 2d: Animated indicator lines on the four painted knobs.
+            // The Morph and Tilt knobs in the faceplate are painted with
+            // a slight 3D parallax (viewed off-axis) so their visual centres
+            // are offset from their geometric centres — we shift the boxes
+            // ~12px right to land the indicator on the perceived centre.
+            // Morph: nudged up-left to align with painted knob centre
+            place_view(cx,  70, 460, 90, 90, move |cx| { KnobIndicator::new(cx, p_kn1.clone(), KnobParam::Morph, 36.0); });
+            // Tilt: nudged down-left to align with painted knob centre
+            place_view(cx,  70, 620, 90, 90, move |cx| { KnobIndicator::new(cx, p_kn2.clone(), KnobParam::Tilt, 36.0); });
+            // Size knob: centre (470, 555), painted knob ~95px diameter
+            place_view(cx, 420, 505, 100, 100, move |cx| { KnobIndicator::new(cx, p_kn3.clone(), KnobParam::Size, 42.0); });
+            // Drive knob: centre (635, 335), painted knob ~70px diameter (perfect already)
+            place_view(cx, 590, 290, 90,  90,  move |cx| { KnobIndicator::new(cx, p_kn4.clone(), KnobParam::Drive, 45.0); });
+
             // Layer 3: each slider positioned absolutely over its painted slot.
             // Vizia uses left/top with position-type self-directed for absolute.
 
             // EXCITER column (x=107)
             place_slider(cx, "amber",  107, 295, 130, |p| &p.exciter_morph);
-            place_slider(cx, "purple", 107, 339, 130, |p| &p.spectral_tilt);
-            place_slider(cx, "purple", 107, 389, 130, |p| &p.stochasticity);
+            place_slider(cx, "purple", 107, 343, 130, |p| &p.spectral_tilt);
+            place_slider(cx, "purple", 107, 391, 130, |p| &p.stochasticity);
 
             // VIBRATOR column (x=290)
             place_slider(cx, "amber",  290, 293, 130, |p| &p.vib_damping);
@@ -643,8 +896,9 @@ pub(crate) fn create(
             place_slider(cx, "teal",   470, 467, 130, |p| &p.body_size);
 
             // MIX column (x=635)
-            place_slider(cx, "teal",   635, 145, 140, |p| &p.exciter_bleed);
-            place_slider(cx, "amber",  635, 195, 140, |p| &p.body_mix);
+            // MIX column (x=635) — slot positions tuned for painted slot alignment
+            place_slider(cx, "teal",   635, 165, 140, |p| &p.exciter_bleed);
+            place_slider(cx, "amber",  635, 215, 140, |p| &p.body_mix);
 
             // CHARACTER column (x=800)
             place_slider(cx, "amber",  800, 294, 130, |p| &p.nl_drive);
@@ -654,8 +908,8 @@ pub(crate) fn create(
             place_slider(cx, "teal",   800, 487, 130, |p| &p.nl_tone);
 
             // SPACE column (x=970)
-            place_slider(cx, "amber",  970, 292, 130, |p| &p.room_size);
-            place_slider(cx, "teal",   970, 340, 130, |p| &p.room_mix);
+            place_slider(cx, "amber",  970, 302, 130, |p| &p.room_size);
+            place_slider(cx, "teal",   970, 350, 130, |p| &p.room_mix);
 
             // (Master gain has no slot — only the VU meter, which we'll add next step.
             //  For now, accessible via DAW generic param panel.)
